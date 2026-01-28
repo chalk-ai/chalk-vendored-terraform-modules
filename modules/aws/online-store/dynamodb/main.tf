@@ -70,6 +70,13 @@ resource "aws_dynamodb_table" "main" {
   billing_mode   = var.billing_mode
   write_capacity = var.write_capacity
   read_capacity  = var.read_capacity
+
+  lifecycle {
+    ignore_changes = [
+      write_capacity,
+      read_capacity,
+    ]
+  }
 }
 
 output "arn" {
