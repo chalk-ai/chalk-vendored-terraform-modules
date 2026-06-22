@@ -38,6 +38,19 @@ Redis-compatible in-memory data store using AWS ElastiCache.
 - `valkey_endpoint_redis_secret_name`: Secret name to configure in Chalk dashboard
 - `security_group_id`: Security group for network access
 
+### AWS Compute Modules
+
+#### Container Registry (`modules/aws/container-registry`)
+
+ECR repository for Chalk [compute](https://docs.chalk.ai/docs/compute/compute-setup),
+pre-tagged `chalk.ai/managed-by = chalk` so a scoped-down Chalk role (ABAC) can push to it.
+
+**Features**:
+- `chalk.ai/managed-by = chalk` tag baked in (cannot be omitted)
+
+**Key Outputs**:
+- `repository_url`: Repository URL for image pushes and Chalk compute config
+
 ## Usage
 
 ### DynamoDB
