@@ -18,7 +18,6 @@ that occur when the tag is missing.
 ## Features
 
 - ECR repository pre-tagged with `chalk.ai/managed-by = chalk` (cannot be omitted)
-- Immutable image tags by default
 
 ## Usage
 
@@ -39,7 +38,6 @@ output "compute_registry_url" {
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | repository_name | string | _(required)_ | ECR repository name, e.g. `chalk-snrn-prod/compute` |
-| image_tag_mutability | string | `"IMMUTABLE"` | `IMMUTABLE` or `MUTABLE` |
 | force_delete | bool | `false` | Delete repo even if it contains images |
 | tags | map(string) | `{}` | Additional tags; `chalk.ai/managed-by = chalk` is always merged in |
 

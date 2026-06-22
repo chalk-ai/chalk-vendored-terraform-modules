@@ -10,12 +10,6 @@ variable "repository_name" {
   type        = string
 }
 
-variable "image_tag_mutability" {
-  description = "Whether image tags can be overwritten. IMMUTABLE or MUTABLE."
-  type        = string
-  default     = "IMMUTABLE"
-}
-
 variable "force_delete" {
   description = "Delete the repository even if it contains images when destroyed."
   type        = bool
@@ -29,9 +23,8 @@ variable "tags" {
 }
 
 resource "aws_ecr_repository" "this" {
-  name                 = var.repository_name
-  image_tag_mutability = var.image_tag_mutability
-  force_delete         = var.force_delete
+  name         = var.repository_name
+  force_delete = var.force_delete
 
   # REQUIRED: this tag is what Chalk's scoped-down role keys off of (ABAC).
   # Without it, the Chalk management role gets AccessDenied on push.
