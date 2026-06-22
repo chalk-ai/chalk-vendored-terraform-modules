@@ -47,7 +47,7 @@ pre-tagged `chalk.ai/managed-by = chalk` so a scoped-down Chalk role (ABAC) can 
 
 **Features**:
 - `chalk.ai/managed-by = chalk` tag baked in (cannot be omitted)
-- Immutable image tags and scan-on-push by default
+- Immutable image tags by default
 
 **Key Outputs**:
 - `repository_url`: Repository URL for image pushes and Chalk compute config

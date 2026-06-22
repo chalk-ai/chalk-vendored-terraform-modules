@@ -16,12 +16,6 @@ variable "image_tag_mutability" {
   default     = "IMMUTABLE"
 }
 
-variable "scan_on_push" {
-  description = "Scan images for vulnerabilities when pushed."
-  type        = bool
-  default     = true
-}
-
 variable "force_delete" {
   description = "Delete the repository even if it contains images when destroyed."
   type        = bool
@@ -38,10 +32,6 @@ resource "aws_ecr_repository" "this" {
   name                 = var.repository_name
   image_tag_mutability = var.image_tag_mutability
   force_delete         = var.force_delete
-
-  image_scanning_configuration {
-    scan_on_push = var.scan_on_push
-  }
 
   # REQUIRED: this tag is what Chalk's scoped-down role keys off of (ABAC).
   # Without it, the Chalk management role gets AccessDenied on push.
