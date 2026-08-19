@@ -8,6 +8,12 @@ Self-contained modules for deploying infrastructure components used by Chalk. Ea
 
 ## Available Modules
 
+### AWS IAM Modules
+
+#### Chalk Management Role (`modules/aws/chalk-management-role`)
+
+Creates the cross-account IAM role Chalk uses to deploy and manage customer-cloud infrastructure. It supports broad initial-deployment permissions and a flag that switches the role to restricted ongoing-management permissions without replacing the role.
+
 ### AWS Online Store Modules
 
 #### DynamoDB (`modules/aws/online-store/dynamodb`)
@@ -39,6 +45,16 @@ Redis-compatible in-memory data store using AWS ElastiCache.
 - `security_group_id`: Security group for network access
 
 ## Usage
+
+### Chalk Management Role
+
+```hcl
+module "chalk_management_role" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/chalk-management-role?ref=main"
+
+  external_id = var.chalk_external_id
+}
+```
 
 ### DynamoDB
 
