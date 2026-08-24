@@ -300,7 +300,6 @@ data "aws_iam_policy_document" "restricted" {
       "rds:ModifyDBProxy",
       "rds:ModifyDBProxyTargetGroup",
       "rds:RegisterDBProxyTargets",
-      "rds:RemoveTagsFromResource",
     ]
     resources = [
       "arn:${local.partition}:rds:${local.region}:${local.account_id}:db-proxy:*",
