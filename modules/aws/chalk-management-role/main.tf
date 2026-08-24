@@ -284,6 +284,38 @@ data "aws_iam_policy_document" "restricted" {
     resources = ["*"]
   }
 
+  # RDS Proxy and its default target group use AWS-generated IDs in their
+  # ARNs, even when their configured names start with "chalk". Keep access to
+  # those opaque ARNs limited to proxy lifecycle operations and resources that
+  # carry Chalk's management tag.
+  statement {
+    sid    = "ChalkManagedRDSProxy"
+    effect = "Allow"
+    actions = [
+      "rds:AddTagsToResource",
+      "rds:DeleteDBProxy",
+      "rds:DeregisterDBProxyTargets",
+      "rds:DescribeDBProxies",
+      "rds:DescribeDBProxyTargetGroups",
+      "rds:DescribeDBProxyTargets",
+      "rds:ListTagsForResource",
+      "rds:ModifyDBProxy",
+      "rds:ModifyDBProxyTargetGroup",
+      "rds:RegisterDBProxyTargets",
+      "rds:RemoveTagsFromResource",
+    ]
+    resources = [
+      "arn:${local.partition}:rds:${local.region}:${local.account_id}:db-proxy:*",
+      "arn:${local.partition}:rds:${local.region}:${local.account_id}:target-group:*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/chalk.ai/managed-by"
+      values   = ["chalk"]
+    }
+  }
+
   statement {
     sid     = "ChalkRunInstances"
     effect  = "Allow"
