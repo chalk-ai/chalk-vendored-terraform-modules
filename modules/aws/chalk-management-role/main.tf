@@ -286,15 +286,13 @@ data "aws_iam_policy_document" "restricted" {
 
   # RDS Proxy and its default target group use AWS-generated IDs in their
   # ARNs, even when their configured names start with "chalk". Keep access to
-  # those opaque ARNs limited to proxy lifecycle operations and resources that
-  # carry Chalk's management tag.
+  # those opaque ARNs limited to non-destructive proxy management and to
+  # resources that carry Chalk's management tag.
   statement {
     sid    = "ChalkManagedRDSProxy"
     effect = "Allow"
     actions = [
       "rds:AddTagsToResource",
-      "rds:DeleteDBProxy",
-      "rds:DeregisterDBProxyTargets",
       "rds:DescribeDBProxies",
       "rds:DescribeDBProxyTargetGroups",
       "rds:DescribeDBProxyTargets",
