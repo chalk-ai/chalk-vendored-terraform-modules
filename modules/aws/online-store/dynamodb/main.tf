@@ -26,7 +26,7 @@ variable "read_capacity" {
 
 variable "autoscaling_read" {
   description = "Autoscaling configuration for read capacity"
-  type = map(string)
+  type        = map(string)
   default = {
     min_capacity = 5
     max_capacity = 100
@@ -36,7 +36,7 @@ variable "autoscaling_read" {
 
 variable "autoscaling_write" {
   description = "Autoscaling configuration for write capacity"
-  type = map(string)
+  type        = map(string)
   default = {
     min_capacity = 5
     max_capacity = 100
@@ -106,6 +106,6 @@ resource "aws_secretsmanager_secret" "online_store_secret" {
 }
 
 resource "aws_secretsmanager_secret_version" "online_store_secret_version" {
-  secret_id = aws_secretsmanager_secret.online_store_secret.id
+  secret_id     = aws_secretsmanager_secret.online_store_secret.id
   secret_string = format("dynamodb:///%s", aws_dynamodb_table.main.name)
 }

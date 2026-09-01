@@ -56,7 +56,7 @@ resource "aws_security_group_rule" "valkey_egress" {
   from_port         = 0
   to_port           = 0
   protocol          = "-1"
-  cidr_blocks = ["0.0.0.0/0"]
+  cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.valkey.id
   description       = "Allow all outbound traffic"
 }
@@ -64,25 +64,25 @@ resource "aws_security_group_rule" "valkey_egress" {
 # ElastiCache Valkey cluster
 resource "aws_elasticache_replication_group" "valkey" {
   replication_group_id = var.cluster_id
-  description = "Valkey cluster ${var.cluster_id}"
+  description          = "Valkey cluster ${var.cluster_id}"
 
   # Valkey engine configuration
   engine               = "valkey"
   engine_version       = var.engine_version
   parameter_group_name = var.parameter_group_name
-  port = var.port
+  port                 = var.port
 
   # Node and cluster configuration
-  node_type       = var.node_type
-  num_node_groups = var.num_node_groups
+  node_type               = var.node_type
+  num_node_groups         = var.num_node_groups
   replicas_per_node_group = var.replicas_per_node_group
 
   # Network configuration
-  subnet_group_name = aws_elasticache_subnet_group.valkey.name
+  subnet_group_name  = aws_elasticache_subnet_group.valkey.name
   security_group_ids = [aws_security_group.valkey.id]
 
   # Availability and failover
-  multi_az_enabled = var.multi_az_enabled
+  multi_az_enabled           = var.multi_az_enabled
   automatic_failover_enabled = var.automatic_failover_enabled
 
   # Encryption
@@ -93,7 +93,7 @@ resource "aws_elasticache_replication_group" "valkey" {
   auto_minor_version_upgrade = var.auto_minor_version_upgrade
   maintenance_window         = var.maintenance_window
   snapshot_retention_limit   = var.snapshot_retention_limit
-  snapshot_window = var.snapshot_window
+  snapshot_window            = var.snapshot_window
 
   # Apply mode must be specified for cluster mode
   apply_immediately = false
