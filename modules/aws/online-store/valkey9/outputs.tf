@@ -105,3 +105,19 @@ output "security_group_name" {
   description = "Generated security group name"
   value       = local.security_group_name
 }
+
+# Restore and durability
+output "snapshot_name" {
+  description = "Snapshot this cluster was restored from, or null"
+  value       = aws_elasticache_replication_group.valkey.snapshot_name
+}
+
+output "durability" {
+  description = "Durability setting on the cluster as planned by the provider"
+  value       = aws_elasticache_replication_group.valkey.durability
+}
+
+output "durability_input" {
+  description = "Echo of var.durability. durability is Optional+Computed in the provider schema, so the resource attribute is never null even when the caller supplied nothing; this output distinguishes the two."
+  value       = var.durability
+}

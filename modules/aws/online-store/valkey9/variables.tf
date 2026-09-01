@@ -38,13 +38,13 @@ variable "node_type" {
 variable "engine_version" {
   description = "Valkey engine version"
   type        = string
-  default     = "8.0"
+  default     = "9.0"
 }
 
 variable "parameter_group_name" {
   description = "Name of the parameter group to associate with this cluster"
   type        = string
-  default     = "default.valkey8.cluster.on"
+  default     = "default.valkey9.cluster.on"
 }
 
 variable "port" {
@@ -112,4 +112,22 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "snapshot_name" {
+  description = "Name of an ElastiCache snapshot to restore this cluster from. Create-only: changing it replaces the cluster. The restore may target a different shard count than the snapshot was taken at; ElastiCache redistributes slots."
+  type        = string
+  default     = null
+}
+
+variable "durability" {
+  description = "ElastiCache Multi-AZ transactional log durability: default, async, sync or disabled. Create-only, and cannot be disabled once enabled. async or sync additionally require Valkey 9.0+, Multi-AZ, at least one replica, transit encryption, and a Graviton node family."
+  type        = string
+  default     = null
+
+  validation {
+    # coalesce, not a null guard, because Terraform does not reliably short-circuit || here.
+    condition     = contains(["default", "async", "sync", "disabled"], coalesce(var.durability, "default"))
+    error_message = "durability must be one of: default, async, sync, disabled."
+  }
 }
