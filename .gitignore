@@ -1,1 +1,10 @@
 *.iml
+
+# OpenTofu / Terraform working files. These modules are consumed by git tag, so the
+# lock file is not committed -- consumers resolve providers in their own root module.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log

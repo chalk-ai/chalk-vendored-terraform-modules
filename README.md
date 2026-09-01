@@ -30,19 +30,33 @@ Managed NoSQL database for Chalk's online feature store.
 - `online_store_secret`: Secret name to configure in Chalk dashboard
 - `table_uri`: DynamoDB connection URI
 
-#### Valkey (`modules/aws/online-store/valkey`)
+#### Valkey 9 (`modules/aws/online-store/valkey9`)
 
-Redis-compatible in-memory data store using AWS ElastiCache.
+Redis-compatible in-memory data store using AWS ElastiCache. **Recommended for all new clusters.**
 
 **Features**:
 - Cluster mode with sharding and replication
 - Multi-AZ deployment with automatic failover
 - Encryption in transit and at rest
 - VPC security group configuration
+- **Multi-AZ transactional log durability** (`durability`) — create-only, with plan-time preconditions for every prerequisite
+- **Restore from an ElastiCache snapshot** (`snapshot_name`), including into a different shard count
+
+**Requires** AWS provider `>= 6.51.0`.
 
 **Key Outputs**:
 - `valkey_endpoint_redis_secret_name`: Secret name to configure in Chalk dashboard
 - `security_group_id`: Security group for network access
+
+See [`modules/aws/online-store/valkey9/README.md`](modules/aws/online-store/valkey9/README.md).
+
+#### Valkey 8 (`modules/aws/online-store/valkey8`)
+
+**Deprecated / frozen.** An unmodified copy of the original `valkey` module — same resources, same
+defaults, same outputs — kept only so that existing Valkey 8 clusters have a stable home. No new
+features will be added. Use `valkey9` for new clusters.
+
+See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valkey8/README.md).
 
 ## Usage
 
@@ -50,7 +64,7 @@ Redis-compatible in-memory data store using AWS ElastiCache.
 
 ```hcl
 module "chalk_management_role" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/chalk-management-role?ref=main"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/chalk-management-role?ref=v0.2.0"
 
   external_id = var.chalk_external_id
 }
@@ -60,7 +74,7 @@ module "chalk_management_role" {
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/online-store/dynamodb?ref=main"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/online-store/dynamodb?ref=v0.2.0"
 
   table_name   = "chalk_online_store"
   billing_mode = "PAY_PER_REQUEST"
@@ -71,11 +85,11 @@ output "secret_name" {
 }
 ```
 
-### Valkey
+### Valkey 9
 
 ```hcl
 module "chalk_valkey_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/online-store/valkey?ref=main"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/online-store/valkey9?ref=v0.2.0"
 
   cluster_id              = "chalk-valkey"
   vpc_id                  = "vpc-xxxxx"
@@ -95,6 +109,27 @@ output "secret_name" {
   value = module.chalk_valkey_store.valkey_endpoint_redis_secret_name
 }
 ```
+
+## Versioning
+
+Modules are consumed by git tag. **Always pin `?ref=<tag>`** — never `?ref=main`.
+
+| Tag | Notes |
+|-----|-------|
+| `v0.1.0` | Last release containing `modules/aws/online-store/valkey` |
+| `v0.2.0` | Removed `modules/aws/online-store/valkey` in favour of `valkey8` / `valkey9` |
+
+## Migrating from the `valkey` module
+
+`modules/aws/online-store/valkey` was removed in `v0.2.0`. Pick a target:
+
+| From | To | Effect |
+|------|----|--------|
+| `.../online-store/valkey?ref=v0.1.0` | `.../online-store/valkey8?ref=v0.2.0` | Stay on Valkey 8. Plans as a **no-op**. |
+| `.../online-store/valkey?ref=v0.1.0` | `.../online-store/valkey9?ref=v0.2.0` | Move to Valkey 9. **One-way engine upgrade** — it cannot be downgraded — and the parameter group family changes too. |
+
+Either way the migration is a **source-string change only**. A module's `source` is not part of its
+resource addresses, so no `moved` blocks and no state surgery are required.
 
 ## Integration with Chalk
 
