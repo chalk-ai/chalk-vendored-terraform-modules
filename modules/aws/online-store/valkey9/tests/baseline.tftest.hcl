@@ -34,7 +34,7 @@ run "defaults_are_pinned" {
     error_message = "default node_type changed"
   }
   assert {
-    condition     = output.engine_version == "8.0"
+    condition     = output.engine_version == "9.0"
     error_message = "default engine_version changed"
   }
   assert {
@@ -46,7 +46,7 @@ run "defaults_are_pinned" {
     error_message = "engine is no longer valkey"
   }
   assert {
-    condition     = aws_elasticache_replication_group.valkey.parameter_group_name == "default.valkey8.cluster.on"
+    condition     = aws_elasticache_replication_group.valkey.parameter_group_name == "default.valkey9.cluster.on"
     error_message = "default parameter_group_name changed"
   }
   assert {
@@ -179,8 +179,8 @@ run "caller_replay_minimal_args" {
   }
 
   assert {
-    condition     = output.engine_version == "8.0"
-    error_message = "minimal caller no longer gets the Valkey 8 default"
+    condition     = output.engine_version == "9.0"
+    error_message = "minimal caller no longer gets the Valkey 9 default"
   }
   assert {
     condition     = output.valkey_endpoint_redis_secret_name == "chalk-valkey-minimal-redis-uri"
