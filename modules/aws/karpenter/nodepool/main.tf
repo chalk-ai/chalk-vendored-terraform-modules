@@ -10,6 +10,13 @@
 #                             and disruption all move between clusters unchanged, which is why the
 #                             override set is this thin.
 #
+#                             ONE NAMED EXCEPTION to "everything else verbatim":
+#                             spec.template.metadata.labels["chalk.ai/managed-by"], which
+#                             var.chalk_managed writes when true. It is a functional switch read by
+#                             Chalk's control plane, not a portable value, so it belongs to the
+#                             cluster the pool lands in rather than to the document. Set
+#                             chalk_managed = false and the module does not touch that key.
+#
 # Every optional input defaults to null, so "the caller set this" is exactly "non-null". That is what
 # lets YAML mode REJECT an input it would otherwise silently ignore, and it is why the real
 # template-mode defaults ([] and {}) are resolved here rather than in the variable blocks.
@@ -20,17 +27,31 @@ locals {
   # path.module cannot appear in a variable default, so the bundled template is resolved here.
   manifest_template = var.manifest_path == null ? "${path.module}/templates/nodepool.yaml.tftpl" : var.manifest_path
 
+  # The Chalk-managed stamp, shared by both modes. Chalk's control plane gates create/update/delete
+  # on spec.template.metadata.labels["chalk.ai/managed-by"] == "chalk", and Chalk billing reads the
+  # same key, so this label is a functional switch rather than decoration.
+  #
+  # It is merged OVER the caller's labels and over the document's, so a pre-existing value for this
+  # key is overwritten rather than preserved. That is deliberate and matches Chalk's own
+  # AddChalkManagedLabelToLabels, which also overwrites a non-chalk value: the toggle owns the key.
+  # An empty map when the toggle is off, which is what makes "off touches nothing" a merge no-op.
+  chalk_managed_label = var.chalk_managed ? { "chalk.ai/managed-by" = "chalk" } : {}
+
   # Template-mode defaults. An empty collection is indistinguishable from "unset" at the variable
   # level, so requirements/limits/taints/labels default to null and the empty collection is restored
-  # here, for template mode only. What the template receives is therefore identical to what it
-  # received before YAML mode existed, and template-mode output is unchanged byte for byte.
+  # here, for template mode only.
+  #
+  # `labels` is the one entry that is not a plain null-to-empty restore: the stamp is folded in HERE,
+  # upstream of cap_label_count below, so the 100-entry cap counts the emitted label set rather than
+  # the caller's and needs no special case for the stamp. A consequence worth stating plainly: with
+  # chalk_managed on, a caller with no labels of their own still renders spec.template.metadata.
   template_vars = {
     name                     = var.name == null ? "" : var.name
     ec2nodeclass_name        = var.ec2nodeclass_name == null ? "" : var.ec2nodeclass_name
     requirements             = var.requirements == null ? [] : var.requirements
     limits                   = var.limits == null ? {} : var.limits
     taints                   = var.taints == null ? [] : var.taints
-    labels                   = var.labels == null ? {} : var.labels
+    labels                   = merge(var.labels == null ? {} : var.labels, local.chalk_managed_label)
     weight                   = var.weight
     disruption               = var.disruption
     expire_after             = var.expire_after
@@ -49,11 +70,13 @@ locals {
   # Each level of the path the overrides touch, read back as a mapping or as {} when it is absent.
   # merge({}, x) is the total "is x a mapping" test: it errors for a scalar or a sequence and try()
   # turns that into {}, so a pathological document cannot crash the rebuild.
-  doc_metadata       = try(merge({}, local.decoded.metadata), {})
-  doc_spec           = try(merge({}, local.decoded.spec), {})
-  doc_template       = try(merge({}, local.decoded.spec.template), {})
-  doc_template_spec  = try(merge({}, local.decoded.spec.template.spec), {})
-  doc_node_class_ref = try(merge({}, local.decoded.spec.template.spec.nodeClassRef), {})
+  doc_metadata          = try(merge({}, local.decoded.metadata), {})
+  doc_spec              = try(merge({}, local.decoded.spec), {})
+  doc_template          = try(merge({}, local.decoded.spec.template), {})
+  doc_template_metadata = try(merge({}, local.decoded.spec.template.metadata), {})
+  doc_template_labels   = try(merge({}, local.decoded.spec.template.metadata.labels), {})
+  doc_template_spec     = try(merge({}, local.decoded.spec.template.spec), {})
+  doc_node_class_ref    = try(merge({}, local.decoded.spec.template.spec.nodeClassRef), {})
 
   # The override set. Each override applies only when its input is non-null: a null input means
   # "inherit whatever the document says". The `length(...) == 0 ? {}` guards keep the rebuild from
@@ -74,8 +97,19 @@ locals {
     length(local.yaml_node_class_ref) == 0 ? {} : { nodeClassRef = local.yaml_node_class_ref },
   )
 
+  # The stamp over the document's own labels. Only the one key is touched: every other label, and
+  # every other key under spec.template.metadata such as annotations, comes through doc_* untouched.
+  yaml_template_labels   = merge(local.doc_template_labels, local.chalk_managed_label)
+  yaml_template_metadata = merge(local.doc_template_metadata, { labels = local.yaml_template_labels })
+
+  # `var.chalk_managed ? ... : {}` rather than the length() guard the other overrides use, so that
+  # chalk_managed = false does not rebuild this subtree AT ALL -- doc_template already carries the
+  # document's metadata through, so "off never touches that key" is structural here rather than a
+  # merge that happens to be an identity. When it is on the rebuilt metadata always holds at least
+  # the stamp, so it needs no emptiness guard.
   yaml_template = merge(
     local.doc_template,
+    var.chalk_managed ? { metadata = local.yaml_template_metadata } : {},
     length(local.yaml_template_spec) == 0 ? {} : { spec = local.yaml_template_spec },
   )
 
@@ -109,7 +143,9 @@ locals {
 
   # Inputs YAML mode would ignore. Rejected rather than silently dropped: with every optional input
   # defaulting to null, "set in YAML mode" is simply "non-null". manifest_path is absent from this
-  # list on purpose -- it is a mode selector, not a value, and gets its own precondition.
+  # list on purpose -- it is a mode selector, not a value, and gets its own precondition. So is
+  # chalk_managed, for the opposite reason: YAML mode does NOT ignore it. It is the one input that
+  # takes effect in both modes, so rejecting it here would make the label unreachable from YAML mode.
   yaml_mode_ignored_inputs = local.yaml_mode ? compact([
     var.requirements != null ? "requirements" : "",
     var.limits != null ? "limits" : "",
@@ -133,6 +169,10 @@ locals {
   # The requirements-plus-labels cap counts what is actually emitted. In YAML mode that is the
   # document's own requirements and labels -- neither is an override, so they survive to the merged
   # manifest untouched -- not the (null) variables.
+  #
+  # Both counts read the EMITTED label set, which is why neither expression mentions the stamp: it is
+  # folded into template_vars.labels and into merged in both branches above, so it is already inside
+  # cap_label_count and the arithmetic below stays correct without a special case.
   cap_requirement_count = local.yaml_mode ? try(length(local.merged.spec.template.spec.requirements), 0) : length(local.template_vars.requirements)
   cap_label_count       = local.yaml_mode ? try(length(local.merged.spec.template.metadata.labels), 0) : length(local.template_vars.labels)
 }
@@ -198,7 +238,7 @@ resource "kubectl_manifest" "this" {
     # NodeClaim as requirements and count toward the same MaxItems=100 cap as spec.requirements.
     precondition {
       condition     = local.cap_requirement_count + local.cap_label_count <= 100
-      error_message = "requirements and labels together may define at most 100 entries: labels propagate as NodeClaim requirements and count toward the same cap. Got ${local.cap_requirement_count} requirements and ${local.cap_label_count} labels."
+      error_message = "requirements and labels together may define at most 100 entries: labels propagate as NodeClaim requirements and count toward the same cap. Got ${local.cap_requirement_count} requirements and ${local.cap_label_count} labels.${var.chalk_managed ? " That label count INCLUDES the chalk.ai/managed-by entry chalk_managed stamps, so the budget left to the caller is 99, not 100. Drop one entry, or set chalk_managed = false to give the slot back and opt the pool out of Chalk dashboard management." : ""}"
     }
   }
 }

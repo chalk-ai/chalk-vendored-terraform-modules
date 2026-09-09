@@ -17,6 +17,6 @@ output "id" {
 }
 
 output "rendered_manifest" {
-  description = "The NodePool YAML exactly as it is submitted: rendered from the template in template mode, or the caller's manifest_yaml document with the module's two overrides applied and re-encoded in YAML mode. Known at plan time, so tests and reviewers can assert on it without applying."
+  description = "The NodePool YAML exactly as it is submitted: rendered from the template in template mode, or the caller's manifest_yaml document with the module's two name overrides -- plus the chalk.ai/managed-by label when chalk_managed is true -- applied and re-encoded in YAML mode. Known at plan time, so tests and reviewers can assert on it without applying."
   value       = local.rendered_manifest
 }

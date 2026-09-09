@@ -154,7 +154,7 @@ variable "taints" {
 }
 
 variable "labels" {
-  description = "spec.template.metadata.labels. These propagate onto every node as NodeClaim requirements and therefore count toward the same 100-entry cap as `requirements`. Template mode only; null emits no template.metadata block."
+  description = "spec.template.metadata.labels. These propagate onto every node as NodeClaim requirements and therefore count toward the same 100-entry cap as `requirements`. Template mode only; null emits no template.metadata block, UNLESS chalk_managed is true, which stamps one label of its own and therefore renders the block on its own account. chalk_managed also OVERWRITES the chalk.ai/managed-by key if this map sets it -- see that variable."
   type        = map(string)
   default     = null
 
@@ -176,6 +176,20 @@ variable "labels" {
     ])
     error_message = "Each label value must be empty or at most 63 alphanumeric, '-', '_' or '.' characters starting and ending with an alphanumeric."
   }
+}
+
+# Unlike every other optional input this is a non-null bool with a real default, in the same shape as
+# lookup_ec2nodeclass: it is a behaviour switch rather than a value to forward, so "the caller set it"
+# carries no information the module needs and the null policy above does not apply. It is also the one
+# input that takes effect in BOTH modes, which is why it is absent from yaml_mode_ignored_inputs.
+variable "chalk_managed" {
+  description = "Stamp `chalk.ai/managed-by: chalk` into spec.template.metadata.labels. That label is a functional switch, not decoration: Chalk's control plane reads it off the NodePool and only pools carrying it may be created, updated or deleted from the Chalk dashboard, and Chalk billing reads the same key to classify nodes as Chalk-managed. True FORCES the label in both input modes, overwriting any other value the caller's `labels` or the manifest_yaml document sets for that key -- the toggle owns the key. The stamped entry counts toward the same 100-entry cap as requirements and labels, so leaving this on leaves the caller 99 of the 100. Set false to opt out, after which the module never writes that key in either mode."
+  type        = bool
+  default     = true
+
+  # A null here would reach `var.chalk_managed ? ... : ...` in main.tf and fail with a raw
+  # "The condition value is null". nullable = false makes an explicit null use the default instead.
+  nullable = false
 }
 
 variable "weight" {

@@ -10,12 +10,18 @@ module renders the manifest from a template. **YAML mode** is opt-in: pass a fin
 document as `manifest_yaml` and the module emits it with only the two cluster-specific names
 overridden. See [Input modes](#input-modes).
 
+Both modes stamp `chalk.ai/managed-by: chalk` into `spec.template.metadata.labels` by default. That
+label decides whether Chalk may manage the pool, and it is opt-out rather than opt-in — see
+[Chalk-managed pools](#chalk-managed-pools).
+
 ## Features
 
 - Renders exactly one `karpenter.sh/v1` `NodePool` from a template file, applied with
   `kubectl_manifest`
 - Optional **YAML mode**: hand the module a finished NodePool document and it overrides only
   `metadata.name` and `spec.template.spec.nodeClassRef.name`, emitting everything else verbatim
+- `chalk_managed`, on by default, stamps the `chalk.ai/managed-by: chalk` label that gates whether
+  Chalk's dashboard may create, update or delete the pool — in **both** modes
 - Emits the v1 `nodeClassRef` triple (`group`, `kind`, `name`) so a caller never hand-writes the
   group/kind pair that Karpenter v1.1.0 made mandatory
 - Optional plan-time read of the referenced `EC2NodeClass`, so a missing node class fails the plan
@@ -130,7 +136,7 @@ To give two pools genuinely *different* subnets, create two `EC2NodeClass`es.
 |---|---|---|---|
 | `null` | `null` | template | the template bundled with this module |
 | `null` | set | template | your template, rendered with the module's inputs |
-| set | `null` | **YAML** | your document, with two names overridden |
+| set | `null` | **YAML** | your document, with two names overridden and one label stamped |
 | set | set | — | **error**: they select different modes |
 
 There is no companion path variable for YAML mode. The caller supplies the document, so reading it
@@ -193,18 +199,28 @@ spec:
 ### What YAML mode overrides, and why so little
 
 > In YAML mode the module overrides only what cannot be portable between clusters. Everything else in
-> your document is emitted unchanged.
+> your document is emitted unchanged, with one named exception.
 
-| Document path | Overridden from | When |
+| Document path | Written from | When |
 |---|---|---|
 | `metadata.name` | `name` | only when `name` is non-null |
 | `spec.template.spec.nodeClassRef.name` | `ec2nodeclass_name` | only when `ec2nodeclass_name` is non-null |
+| `spec.template.metadata.labels["chalk.ai/managed-by"]` | `chalk_managed` | whenever `chalk_managed` is true, which is the **default** |
 
-That is the whole set, and the thinness is the point rather than an oversight. Requirements, limits,
-taints, labels, weight and disruption all mean the same thing on every cluster, so a document
-carrying them moves between clusters unchanged. A NodePool's *name* and the *node class it points
-at* are the two things that do not: the node class is per-cluster, and two pools in one cluster
-cannot share a name. Leave either input `null` and the document's own value stands.
+The first two are the whole *override* set, and the thinness is the point rather than an oversight.
+Requirements, limits, taints, labels, weight and disruption all mean the same thing on every cluster,
+so a document carrying them moves between clusters unchanged. A NodePool's *name* and the *node class
+it points at* are the two things that do not: the node class is per-cluster, and two pools in one
+cluster cannot share a name. Leave either input `null` and the document's own value stands.
+
+**The third row is a deliberate, named exception to "everything else verbatim", called out here
+rather than left for you to discover in a plan diff.** `chalk.ai/managed-by` is not a portable value
+either: it says whether *this* cluster's Chalk control plane may manage the pool, so it belongs to
+the deployment rather than to the document. With `chalk_managed = true` the label is **forced** —
+merged over whatever your document says for that key, so a document setting it to something else is
+overwritten. Set `chalk_managed = false` and the module does not touch that key at all, and your
+document's own value, or its absence, survives exactly. See
+[Chalk-managed pools](#chalk-managed-pools).
 
 `lookup_ec2nodeclass` keeps working. The name it reads is `ec2nodeclass_name` when set, otherwise the
 document's own `nodeClassRef.name`. If neither yields a name and the lookup is on, the plan fails
@@ -217,10 +233,14 @@ Your document is authoritative for everything outside the override set, so `requ
 `manifest_path` have no effect in YAML mode. Setting any of them **fails the plan** rather than being
 silently dropped, and the message names which ones. Put those values in the document instead.
 
-This is why every optional input on this module defaults to `null`, including the collections: an
-empty list is indistinguishable from "the caller set nothing", and the rejection needs that
-distinction. The real template-mode defaults (`[]` and `{}`) are resolved internally, so template
-mode renders exactly what it always did.
+`chalk_managed` is **not** on that list, for the opposite reason: YAML mode does not ignore it. It is
+the one input that takes effect in both modes, so rejecting it here would put the label out of reach
+of every YAML-mode caller. It is also a bool with a real default rather than a nullable value, so
+"the caller set it" carries no information the module needs.
+
+This is why every *other* optional input on this module defaults to `null`, including the
+collections: an empty list is indistinguishable from "the caller set nothing", and the rejection
+needs that distinction. The real template-mode defaults (`[]` and `{}`) are resolved internally.
 
 ### What YAML mode checks about your document
 
@@ -284,6 +304,68 @@ cluster where the API server supplied them itself.
 misconfigured PDB or a pod carrying `karpenter.sh/do-not-disrupt` can block draining indefinitely.
 Maximum node lifetime is `expire_after` plus `termination_grace_period`.
 
+## Chalk-managed pools
+
+`chalk_managed` is a `bool`, **default `true`**. When it is true the module writes
+
+```yaml
+spec:
+  template:
+    metadata:
+      labels:
+        chalk.ai/managed-by: chalk
+```
+
+into the manifest, in template mode and in YAML mode alike.
+
+### What the label gates
+
+The label is a functional switch, not documentation. Two separate Chalk systems read it:
+
+1. **Dashboard management.** Chalk's control plane reads
+   `spec.template.metadata.labels["chalk.ai/managed-by"]` off the NodePool and treats the pool as
+   Chalk-manageable only when it equals exactly `chalk`. Without the label — or with any other value
+   — Chalk's dashboard will not **create, update or delete** the pool, and node-pool edits made
+   there silently do not reach it.
+2. **Billing.** Chalk billing reads the same key to classify nodes as Chalk-managed. So the toggle
+   has a second consumer, and flipping it off changes how the pool's nodes are attributed as well as
+   who may edit it.
+
+Note the path precisely: it is `spec.template.metadata.labels`, the labels stamped onto every node
+this pool launches — **not** the NodePool object's own `metadata.labels`, which is a different map
+this module still passes through untouched.
+
+### The toggle owns the key
+
+With `chalk_managed = true` the label is forced: it is merged **over** your `labels` input and over
+your `manifest_yaml` document, so a pre-existing `chalk.ai/managed-by: something-else` is
+**overwritten**, not preserved. That is deliberate, and it matches Chalk's own
+`AddChalkManagedLabelToLabels`, which also overwrites a non-`chalk` value. A merge that let the
+caller's value win would produce a pool that the dashboard quietly refuses to manage while the plan
+reported success.
+
+With `chalk_managed = false` the module never writes that key in either mode. It does not remove one
+either: a value your `labels` input or your document sets for that key survives untouched. Off means
+hands-off, not "delete".
+
+Every other label is untouched in both settings. The module adds exactly one key and leaves the rest
+of the map — and any sibling keys under `spec.template.metadata`, such as `annotations` in a
+YAML-mode document — alone.
+
+### Turning it on costs one of the 100 requirement slots
+
+The stamped label is an ordinary label as far as Karpenter is concerned, so it counts toward the
+100-entry cap that `requirements` and `labels` share (see
+[`labels` share the `requirements` budget](#labels-share-the-requirements-budget)).
+
+**With `chalk_managed = true`, your usable budget is 99, not 100.** 99 requirements plus the stamp is
+accepted; 100 requirements plus the stamp fails the plan. 60 requirements and 39 labels is accepted;
+60 and 40 fails. The cap message says so when the toggle is on, and setting `chalk_managed = false`
+gives the slot back — at the cost of opting the pool out of Chalk dashboard management.
+
+Both NodePools captured from live clusters in `tests/fixtures/` already carry this label, which is
+why `true` is the default: it is the fleet's existing state, not a new policy.
+
 ## Validity rules
 
 Every rule below is enforced server-side by the Karpenter CRD regardless of what this module does.
@@ -301,7 +383,7 @@ Several of these are counterintuitive:
 | `Exists` / `DoesNotExist` | Require an **empty** `values` |
 | `Gt` / `Lt` / `Gte` / `Lte` | Require **exactly one** value that parses as a non-negative integer |
 | `minValues` | 1–50, and never greater than the length of its own `values` |
-| `requirements` | At most 100 entries — **and `labels` count toward the same 100** |
+| `requirements` | At most 100 entries — **and `labels` count toward the same 100**, including the label `chalk_managed` stamps |
 | `weight` | 1–100. Omitting it means "treated as 0"; an explicit `0` is **rejected** |
 | `consolidationPolicy` | `WhenEmpty`, `WhenEmptyOrUnderutilized`, `Balanced`. `WhenUnderutilized` is the v1beta1 value and is invalid in v1 |
 | `expire_after`, `consolidateAfter` | `s`/`m`/`h` components, or the literal `Never` |
@@ -338,6 +420,11 @@ must be at most 100. This is the one rule that spans two inputs and therefore ca
 both counts. In YAML mode it counts the **document's** requirements and labels, not the (null)
 inputs, so the cap holds either way.
 
+The count is taken on the labels the module actually **emits**, which means the label
+[`chalk_managed`](#chalk-managed-pools) stamps is inside it. With the toggle at its default of true
+the budget left to you is therefore **99**, in both modes; the precondition message says as much when
+it fires. Set `chalk_managed = false` to reclaim the slot.
+
 ## Rendering
 
 In template mode the manifest comes from `templates/nodepool.yaml.tftpl` via `templatefile()` rather
@@ -345,7 +432,8 @@ than from `yamlencode`, which keeps the manifest a reviewable artefact. Set `man
 substitute your own template; it must accept the same variables as the bundled one. The path is
 resolved against the process working directory, not the module directory.
 
-In YAML mode the manifest is `yamlencode()` of your decoded document with the two overrides applied.
+In YAML mode the manifest is `yamlencode()` of your decoded document with the two name overrides —
+and the `chalk.ai/managed-by` label, unless `chalk_managed = false` — applied.
 See [YAML mode does not preserve comments or key order](#yaml-mode-does-not-preserve-comments-or-key-order).
 
 ### `name` and `ec2nodeclass_name` are required per mode, not module-wide
@@ -367,11 +455,12 @@ its own variable.
 | name | string | `null` | `metadata.name` of the NodePool. A DNS-1123 label, at most 63 characters. **Required in template mode**; in YAML mode it overrides the document's name, and null keeps it |
 | ec2nodeclass_name | string | `null` | Name of the `EC2NodeClass` to schedule against. A literal name, or the node class module's `name` output. **Required in template mode**; in YAML mode it overrides the document's `nodeClassRef.name`, and null keeps it |
 | lookup_ec2nodeclass | bool | `true` | Read the referenced `EC2NodeClass` so a missing one fails the plan. Set false when it is created elsewhere in the same root module |
+| chalk_managed | bool | `true` | Stamp `chalk.ai/managed-by: chalk` into `spec.template.metadata.labels`. Gates whether Chalk's dashboard may create/update/delete the pool, and is read by Chalk billing. **Both modes.** Forced over any conflicting value when true; the key is untouched when false. Occupies one of the 100 requirements-plus-labels slots, leaving 99 — see [Chalk-managed pools](#chalk-managed-pools) |
 | manifest_yaml | string | `null` | A finished NodePool document as YAML. Setting it selects **YAML mode**. Mutually exclusive with `manifest_path` |
 | requirements | list(object) | `null` → `[]` | `spec.template.spec.requirements`: `key`, `operator`, optional `values`, optional `minValues`. Template mode only |
 | limits | map(string) | `null` → `{}` | `spec.limits`, keyed by arbitrary resource name; values are Kubernetes quantities. Template mode only |
 | taints | list(object) | `null` → `[]` | `spec.template.spec.taints`: `key`, optional `value`, `effect`. Template mode only |
-| labels | map(string) | `null` → `{}` | `spec.template.metadata.labels`. Counts toward the 100-entry requirements cap. Template mode only |
+| labels | map(string) | `null` → `{}` | `spec.template.metadata.labels`. Counts toward the 100-entry requirements cap. Template mode only. `chalk_managed` overwrites the `chalk.ai/managed-by` key here, and renders this block on its own account even when this input is null |
 | weight | number | `null` | `spec.weight`, 1–100. Omit rather than passing 0. Template mode only |
 | disruption | object | `null` | `spec.disruption`: `consolidationPolicy`, `consolidateAfter`, `budgets`. Omitted entirely when null. Template mode only |
 | expire_after | string | `null` | `spec.template.spec.expireAfter`. Omitted when null, inheriting Karpenter's 720h. Template mode only |
@@ -379,6 +468,8 @@ its own variable.
 | manifest_path | string | `null` | Replacement **template** file. Null uses the bundled one. Mutually exclusive with `manifest_yaml` |
 
 Every "template mode only" input above is **rejected**, not ignored, when `manifest_yaml` is set.
+`lookup_ec2nodeclass` and `chalk_managed` are the two that apply in both modes and are never
+rejected.
 `null → []` means the variable defaults to `null` and the module resolves the empty collection
 internally for template mode; the two are indistinguishable in the rendered manifest, and the null
 default is what makes the rejection above possible.
@@ -390,7 +481,7 @@ default is what makes the rejection above possible.
 | name | `metadata.name` of the applied NodePool, read off the resource so consumers are ordered after it exists |
 | uid | `metadata.uid` of the applied NodePool |
 | id | Terraform resource ID of the applied NodePool |
-| rendered_manifest | The templated YAML exactly as submitted. Known at plan time |
+| rendered_manifest | The YAML exactly as submitted, including the `chalk.ai/managed-by` label when `chalk_managed` is true. Known at plan time |
 
 ## Out of scope
 
@@ -422,6 +513,7 @@ from this directory: `tests/fixtures.tftest.hcl` loads its fixture YAML by relat
 | `tests/combinations.tftest.hcl` | Rules that span attributes, including the requirements-plus-labels cap |
 | `tests/fixtures.tftest.hcl` | Replay of two anonymised NodePools captured from live clusters |
 | `tests/manifest_yaml.tftest.hcl` | YAML mode: mode selection, document structure, the override set, inheritance, passthrough, ignored-input rejection, and both fixtures fed in as documents |
+| `tests/chalk_managed.tftest.hcl` | `chalk_managed` in both modes: default/true/false, the forced overwrite of a conflicting value, other labels and annotations left alone, the moved 100-entry boundary, and both fixtures reproduced with the label left to the default |
 
 Assertions go through `yamldecode(output.rendered_manifest)`, never the raw string: `templatefile`
 output is whitespace- and key-order-sensitive, and string equality would make the suite fail on

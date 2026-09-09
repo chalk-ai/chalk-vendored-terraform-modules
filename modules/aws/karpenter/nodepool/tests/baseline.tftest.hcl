@@ -41,10 +41,21 @@ run "minimal_pool_renders_a_v1_nodepool" {
 # --------------------------------------------------------------------------------------------------
 # Karpenter defaults are the API server's to supply. Restating them writes server-side values into
 # the caller's manifest and produces diff noise against clusters that never had them.
+#
+# chalk_managed is switched OFF here so this run keeps measuring exactly what it always measured: the
+# absence of Karpenter's own defaults. The chalk.ai/managed-by label is not a Karpenter default -- it
+# is a Chalk value the module writes on purpose -- but with the toggle on it renders
+# spec.template.metadata, which is one of the seven things this run asserts is absent. Opting out
+# keeps all seven assertions about Karpenter defaults rather than about the Chalk stamp; the stamp's
+# own rendering is covered in chalk_managed.tftest.hcl.
 # --------------------------------------------------------------------------------------------------
 
 run "no_karpenter_defaults_are_emitted" {
   command = plan
+
+  variables {
+    chalk_managed = false
+  }
 
   assert {
     condition     = !can(yamldecode(output.rendered_manifest).spec.disruption)

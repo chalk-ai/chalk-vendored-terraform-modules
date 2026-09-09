@@ -405,6 +405,13 @@ run "min_values_single_bad_above_fifty" {
 
 # --------------------------------------------------------------------------------------------------
 # MaxItems = 100 -- and the boundary either side of it
+#
+# The 100-requirement run opts out of chalk_managed so that it measures the CRD's cap on its own. The
+# stamped label occupies one of the same 100 slots, so with the toggle on the requirements-only
+# ceiling is 99; that interaction has its own boundary pair in chalk_managed.tftest.hcl rather than
+# being folded in here, where it would silently change what "the documented MaxItems" means. The runs
+# on the far side of the boundary need no opt-out: 101 or more entries fail var.requirements' own
+# MaxItems validation, which the stamp does not participate in.
 # --------------------------------------------------------------------------------------------------
 
 run "cap_single_requirement" {
@@ -424,7 +431,8 @@ run "cap_boundary_100_accepted" {
   command = plan
 
   variables {
-    requirements = [for i in range(100) : { key = "k${i}", operator = "Exists" }]
+    requirements  = [for i in range(100) : { key = "k${i}", operator = "Exists" }]
+    chalk_managed = false
   }
 
   assert {
