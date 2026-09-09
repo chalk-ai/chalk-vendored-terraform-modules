@@ -1,0 +1,97 @@
+# Karpenter v1 NodePool, rendered by the chalk-vendored-terraform-modules nodepool module.
+#
+# Template maintenance notes:
+#   - Every directive sits at column 0 and closes with `~}`, so it strips its own trailing newline
+#     and leaks no blank lines into the YAML.
+#   - Every scalar except `weight` and `minValues` is emitted through jsonencode. A JSON string is a
+#     valid YAML flow scalar, so quantities like 1k, percentages like 10% and durations like 0s stay
+#     strings instead of being coerced by the YAML parser, and any caller value is escaped correctly.
+#   - Nothing Karpenter already defaults is emitted unless the caller set it -- see RFC section 5.4.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: ${jsonencode(name)}
+spec:
+%{ if disruption != null ~}
+  disruption:${disruption.consolidationPolicy == null && disruption.consolidateAfter == null && disruption.budgets == null ? " {}" : ""}
+%{ if disruption.consolidationPolicy != null ~}
+    consolidationPolicy: ${jsonencode(disruption.consolidationPolicy)}
+%{ endif ~}
+%{ if disruption.consolidateAfter != null ~}
+    consolidateAfter: ${jsonencode(disruption.consolidateAfter)}
+%{ endif ~}
+%{ if disruption.budgets != null ~}
+    budgets:${length(disruption.budgets) == 0 ? " []" : ""}
+%{ for budget in disruption.budgets ~}
+      - nodes: ${jsonencode(budget.nodes)}
+%{ if budget.schedule != null ~}
+        schedule: ${jsonencode(budget.schedule)}
+%{ endif ~}
+%{ if budget.duration != null ~}
+        duration: ${jsonencode(budget.duration)}
+%{ endif ~}
+%{ if budget.reasons != null ~}
+        reasons:${length(budget.reasons) == 0 ? " []" : ""}
+%{ for reason in budget.reasons ~}
+          - ${jsonencode(reason)}
+%{ endfor ~}
+%{ endif ~}
+%{ endfor ~}
+%{ endif ~}
+%{ endif ~}
+%{ if length(limits) > 0 ~}
+  limits:
+%{ for resource_name, quantity in limits ~}
+    ${jsonencode(resource_name)}: ${jsonencode(quantity)}
+%{ endfor ~}
+%{ endif ~}
+  template:
+%{ if length(labels) > 0 ~}
+    metadata:
+      labels:
+%{ for label_key, label_value in labels ~}
+        ${jsonencode(label_key)}: ${jsonencode(label_value)}
+%{ endfor ~}
+%{ endif ~}
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: ${jsonencode(ec2nodeclass_name)}
+%{ if length(requirements) == 0 ~}
+      requirements: []
+%{ else ~}
+      requirements:
+%{ for requirement in requirements ~}
+        - key: ${jsonencode(requirement.key)}
+          operator: ${jsonencode(requirement.operator)}
+%{ if length(requirement.values) > 0 ~}
+          values:
+%{ for value in requirement.values ~}
+            - ${jsonencode(value)}
+%{ endfor ~}
+%{ endif ~}
+%{ if requirement.minValues != null ~}
+          minValues: ${requirement.minValues}
+%{ endif ~}
+%{ endfor ~}
+%{ endif ~}
+%{ if length(taints) > 0 ~}
+      taints:
+%{ for taint in taints ~}
+        - key: ${jsonencode(taint.key)}
+          effect: ${jsonencode(taint.effect)}
+%{ if taint.value != null ~}
+          value: ${jsonencode(taint.value)}
+%{ endif ~}
+%{ endfor ~}
+%{ endif ~}
+%{ if expire_after != null ~}
+      expireAfter: ${jsonencode(expire_after)}
+%{ endif ~}
+%{ if termination_grace_period != null ~}
+      terminationGracePeriod: ${jsonencode(termination_grace_period)}
+%{ endif ~}
+%{ if weight != null ~}
+  weight: ${weight}
+%{ endif ~}
