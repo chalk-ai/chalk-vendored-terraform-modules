@@ -1,0 +1,63 @@
+# Rendered by the chalk-vendored-terraform-modules ec2nodeclass module. Do not edit in-cluster.
+# Every interpolated value goes through jsonencode(): JSON is a subset of YAML, so this quotes and
+# escapes caller-supplied strings correctly without hand-rolling YAML escaping rules.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: ${jsonencode(name)}
+spec:
+  # An `alias` of the form family@version is mutually exclusive with the other term forms and
+  # IMPLIES amiFamily, so amiFamily is deliberately absent from this manifest.
+  amiSelectorTerms:
+    - alias: ${jsonencode(ami_alias)}
+  # spec.role takes the IAM role NAME; Karpenter resolves the instance profile itself.
+  role: ${jsonencode(node_role_name)}
+  # Terms are ORed, so id-form and tag-form terms may be mixed in one list. Generated here rather
+  # than assembled in HCL and injected as a blob, so that the manifest stays the reviewable artefact.
+  subnetSelectorTerms:
+%{ for term in subnet_selector_terms ~}
+%{ if term.id != null ~}
+    - id: ${jsonencode(term.id)}
+%{ else ~}
+    - tags:
+%{ for tag_key, tag_value in term.tags ~}
+        ${jsonencode(tag_key)}: ${jsonencode(tag_value)}
+%{ endfor ~}
+%{ endif ~}
+%{ endfor ~}
+  # Two terms, ORed: the Karpenter discovery tag and the tag the EKS control plane applies to the
+  # cluster security group. Matching either is enough, which tolerates clusters that carry only one.
+  securityGroupSelectorTerms:
+    - tags:
+        "karpenter.sh/discovery": ${jsonencode(cluster_name)}
+    - tags:
+        "aws:eks:cluster-name": ${jsonencode(cluster_name)}
+  tags:
+%{ for tag_key, tag_value in tags ~}
+    ${jsonencode(tag_key)}: ${jsonencode(tag_value)}
+%{ endfor ~}
+  # IMDSv2 only. httpPutResponseHopLimit is 2 so that a pod on the host network can still reach IMDS
+  # through the extra hop; 1 would break it.
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        deleteOnTermination: true
+        volumeSize: ${jsonencode(boot_volume_size)}
+        volumeType: gp3
+%{ if instance_store_policy != null ~}
+  instanceStorePolicy: ${jsonencode(instance_store_policy)}
+%{ endif ~}
+  # registryPullQPS: 0 disables kubelet's image-pull rate limit. Chalk images are large and a fresh
+  # node pulls several at once, so the default QPS materially delays the first pod becoming ready.
+  userData: |
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      kubelet:
+        config:
+          registryPullQPS: 0
