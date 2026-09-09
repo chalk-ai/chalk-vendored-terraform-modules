@@ -5,10 +5,17 @@ Karpenter v1.x. It is the scheduling half of a pair: `modules/aws/karpenter/ec2n
 subnets, AMI and node role, and this module owns requirements, limits, taints, labels, weight and
 disruption. Instantiate the node class once and this module once per pool.
 
+There are two ways to describe the pool. **Template mode** is the default: pass typed inputs and the
+module renders the manifest from a template. **YAML mode** is opt-in: pass a finished NodePool
+document as `manifest_yaml` and the module emits it with only the two cluster-specific names
+overridden. See [Input modes](#input-modes).
+
 ## Features
 
 - Renders exactly one `karpenter.sh/v1` `NodePool` from a template file, applied with
   `kubectl_manifest`
+- Optional **YAML mode**: hand the module a finished NodePool document and it overrides only
+  `metadata.name` and `spec.template.spec.nodeClassRef.name`, emitting everything else verbatim
 - Emits the v1 `nodeClassRef` triple (`group`, `kind`, `name`) so a caller never hand-writes the
   group/kind pair that Karpenter v1.1.0 made mandatory
 - Optional plan-time read of the referenced `EC2NodeClass`, so a missing node class fails the plan
@@ -115,6 +122,131 @@ node class module's subnets are then filtered to that zone:
 
 To give two pools genuinely *different* subnets, create two `EC2NodeClass`es.
 
+## Input modes
+
+`manifest_yaml` selects the mode. It defaults to `null`, so nothing below changes an existing caller.
+
+| `manifest_yaml` | `manifest_path` | Mode | Manifest comes from |
+|---|---|---|---|
+| `null` | `null` | template | the template bundled with this module |
+| `null` | set | template | your template, rendered with the module's inputs |
+| set | `null` | **YAML** | your document, with two names overridden |
+| set | set | — | **error**: they select different modes |
+
+There is no companion path variable for YAML mode. The caller supplies the document, so reading it
+from disk is the caller's job:
+
+```hcl
+module "pool_default" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/nodepool?ref=v0.4.0"
+
+  manifest_yaml = file("${path.root}/nodepool.yaml")
+
+  # The two names this module owns. Both optional -- omit either to keep the document's own value.
+  name              = "example-pool"
+  ec2nodeclass_name = module.karpenter_nodeclass.name
+}
+```
+
+with `nodepool.yaml` alongside your root module:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: placeholder-overridden-by-the-module
+spec:
+  disruption:
+    budgets:
+      - nodes: 10%
+    consolidateAfter: 0s
+    consolidationPolicy: WhenEmptyOrUnderutilized
+  limits:
+    cpu: "500"
+    memory: 5000Gi
+  template:
+    metadata:
+      labels:
+        example.com/managed-by: terraform
+    spec:
+      expireAfter: 720h0m0s
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: placeholder-overridden-by-the-module
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            - on-demand
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - amd64
+      taints:
+        - effect: NoSchedule
+          key: example.com/managed-by
+          value: terraform
+  weight: 20
+```
+
+### What YAML mode overrides, and why so little
+
+> In YAML mode the module overrides only what cannot be portable between clusters. Everything else in
+> your document is emitted unchanged.
+
+| Document path | Overridden from | When |
+|---|---|---|
+| `metadata.name` | `name` | only when `name` is non-null |
+| `spec.template.spec.nodeClassRef.name` | `ec2nodeclass_name` | only when `ec2nodeclass_name` is non-null |
+
+That is the whole set, and the thinness is the point rather than an oversight. Requirements, limits,
+taints, labels, weight and disruption all mean the same thing on every cluster, so a document
+carrying them moves between clusters unchanged. A NodePool's *name* and the *node class it points
+at* are the two things that do not: the node class is per-cluster, and two pools in one cluster
+cannot share a name. Leave either input `null` and the document's own value stands.
+
+`lookup_ec2nodeclass` keeps working. The name it reads is `ec2nodeclass_name` when set, otherwise the
+document's own `nodeClassRef.name`. If neither yields a name and the lookup is on, the plan fails
+saying so; set `lookup_ec2nodeclass = false` if that is intentional.
+
+### Inputs YAML mode would ignore are rejected
+
+Your document is authoritative for everything outside the override set, so `requirements`, `limits`,
+`taints`, `labels`, `weight`, `disruption`, `expire_after`, `termination_grace_period` and
+`manifest_path` have no effect in YAML mode. Setting any of them **fails the plan** rather than being
+silently dropped, and the message names which ones. Put those values in the document instead.
+
+This is why every optional input on this module defaults to `null`, including the collections: an
+empty list is indistinguishable from "the caller set nothing", and the rejection needs that
+distinction. The real template-mode defaults (`[]` and `{}`) are resolved internally, so template
+mode renders exactly what it always did.
+
+### What YAML mode checks about your document
+
+Each of these fails the plan with its own message: the value is not parseable YAML; it decodes to a
+scalar or a sequence rather than a mapping; `kind` is absent or is not `NodePool`; `apiVersion` is
+absent; `apiVersion` names a **v1beta1** group; `spec` is absent.
+
+The v1beta1 case is called out separately because it is the likely paste — a pool copied from a
+pre-v1 cluster or from v1beta1-era documentation. It is not merely a rename: `nodeClassRef` takes
+`group`/`kind`/`name` instead of `apiVersion`/`kind`/`name`, `consolidationPolicy:
+WhenUnderutilized` became `WhenEmptyOrUnderutilized`, and kubelet configuration moved to the
+`EC2NodeClass`. Convert the document before passing it.
+
+Everything else is forwarded to the API server unvalidated, in line with the module's policy of not
+second-guessing what Karpenter may add later.
+
+### YAML mode does not preserve comments or key order
+
+The module decodes your document, applies the two overrides and re-encodes it with `yamlencode`.
+Comments and key order are lost — that is inherent to any decode/merge/emit path, not a defect that
+can be fixed here. `terraform plan` will therefore show a manifest that is semantically your document
+but textually reordered and stripped of comments.
+
+If the reviewable artefact matters more than authoring real YAML, stay in template mode: that is why
+it remains the default. If it does not, YAML mode is the shorter path for a pool you already have.
+
 ## The seam: literal name versus module reference
 
 `ec2nodeclass_name` accepts both forms and they behave differently on purpose.
@@ -203,31 +335,53 @@ Values are Kubernetes quantities and are always rendered as YAML strings, so `1k
 Labels propagate onto every NodeClaim as requirements, so `length(requirements) + length(labels)`
 must be at most 100. This is the one rule that spans two inputs and therefore cannot be a
 `validation` block; it is a `precondition` on the manifest resource, and it fails the plan naming
-both counts.
+both counts. In YAML mode it counts the **document's** requirements and labels, not the (null)
+inputs, so the cap holds either way.
 
 ## Rendering
 
-The manifest comes from `templates/nodepool.yaml.tftpl` via `templatefile()` rather than from
-`yamlencode`, which keeps the manifest a reviewable artefact. Set `manifest_path` to substitute your
-own template; it must accept the same variables as the bundled one. The path is resolved against the
-process working directory, not the module directory.
+In template mode the manifest comes from `templates/nodepool.yaml.tftpl` via `templatefile()` rather
+than from `yamlencode`, which keeps the manifest a reviewable artefact. Set `manifest_path` to
+substitute your own template; it must accept the same variables as the bundled one. The path is
+resolved against the process working directory, not the module directory.
+
+In YAML mode the manifest is `yamlencode()` of your decoded document with the two overrides applied.
+See [YAML mode does not preserve comments or key order](#yaml-mode-does-not-preserve-comments-or-key-order).
+
+### `name` and `ec2nodeclass_name` are required per mode, not module-wide
+
+A Terraform variable is required or optional module-wide; there is no per-mode requiredness. So both
+default to `null`, and "required in template mode" is a `precondition` on the manifest resource
+rather than a missing default.
+
+Behaviour is unchanged — omitting `name` in template mode still fails the plan — but the **error
+surface** differs. It used to be Terraform's own `No value for required variable`; it is now this
+module's message, raised when the resource is planned. Shape checks (the DNS-1123 pattern and the
+rest) are still `validation` blocks on the variables, because a `validation` block may only reference
+its own variable.
 
 ## Inputs
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| name | string | _required_ | `metadata.name` of the NodePool. A DNS-1123 label, at most 63 characters |
-| ec2nodeclass_name | string | _required_ | Name of the `EC2NodeClass` to schedule against. A literal name, or the node class module's `name` output |
+| name | string | `null` | `metadata.name` of the NodePool. A DNS-1123 label, at most 63 characters. **Required in template mode**; in YAML mode it overrides the document's name, and null keeps it |
+| ec2nodeclass_name | string | `null` | Name of the `EC2NodeClass` to schedule against. A literal name, or the node class module's `name` output. **Required in template mode**; in YAML mode it overrides the document's `nodeClassRef.name`, and null keeps it |
 | lookup_ec2nodeclass | bool | `true` | Read the referenced `EC2NodeClass` so a missing one fails the plan. Set false when it is created elsewhere in the same root module |
-| requirements | list(object) | `[]` | `spec.template.spec.requirements`: `key`, `operator`, optional `values`, optional `minValues` |
-| limits | map(string) | `{}` | `spec.limits`, keyed by arbitrary resource name; values are Kubernetes quantities |
-| taints | list(object) | `[]` | `spec.template.spec.taints`: `key`, optional `value`, `effect` |
-| labels | map(string) | `{}` | `spec.template.metadata.labels`. Counts toward the 100-entry requirements cap |
-| weight | number | `null` | `spec.weight`, 1–100. Omit rather than passing 0 |
-| disruption | object | `null` | `spec.disruption`: `consolidationPolicy`, `consolidateAfter`, `budgets`. Omitted entirely when null |
-| expire_after | string | `null` | `spec.template.spec.expireAfter`. Omitted when null, inheriting Karpenter's 720h |
-| termination_grace_period | string | `null` | `spec.template.spec.terminationGracePeriod`. No Karpenter default; does not accept `Never` |
-| manifest_path | string | `null` | Replacement template file. Null uses the bundled one |
+| manifest_yaml | string | `null` | A finished NodePool document as YAML. Setting it selects **YAML mode**. Mutually exclusive with `manifest_path` |
+| requirements | list(object) | `null` → `[]` | `spec.template.spec.requirements`: `key`, `operator`, optional `values`, optional `minValues`. Template mode only |
+| limits | map(string) | `null` → `{}` | `spec.limits`, keyed by arbitrary resource name; values are Kubernetes quantities. Template mode only |
+| taints | list(object) | `null` → `[]` | `spec.template.spec.taints`: `key`, optional `value`, `effect`. Template mode only |
+| labels | map(string) | `null` → `{}` | `spec.template.metadata.labels`. Counts toward the 100-entry requirements cap. Template mode only |
+| weight | number | `null` | `spec.weight`, 1–100. Omit rather than passing 0. Template mode only |
+| disruption | object | `null` | `spec.disruption`: `consolidationPolicy`, `consolidateAfter`, `budgets`. Omitted entirely when null. Template mode only |
+| expire_after | string | `null` | `spec.template.spec.expireAfter`. Omitted when null, inheriting Karpenter's 720h. Template mode only |
+| termination_grace_period | string | `null` | `spec.template.spec.terminationGracePeriod`. No Karpenter default; does not accept `Never`. Template mode only |
+| manifest_path | string | `null` | Replacement **template** file. Null uses the bundled one. Mutually exclusive with `manifest_yaml` |
+
+Every "template mode only" input above is **rejected**, not ignored, when `manifest_yaml` is set.
+`null → []` means the variable defaults to `null` and the module resolves the empty collection
+internally for template mode; the two are indistinguishable in the rendered manifest, and the null
+default is what makes the rejection above possible.
 
 ## Outputs
 
@@ -267,6 +421,7 @@ from this directory: `tests/fixtures.tftest.hcl` loads its fixture YAML by relat
 | `tests/nodeclass_reference.tftest.hcl` | The `nodeClassRef` triple and `lookup_ec2nodeclass` |
 | `tests/combinations.tftest.hcl` | Rules that span attributes, including the requirements-plus-labels cap |
 | `tests/fixtures.tftest.hcl` | Replay of two anonymised NodePools captured from live clusters |
+| `tests/manifest_yaml.tftest.hcl` | YAML mode: mode selection, document structure, the override set, inheritance, passthrough, ignored-input rejection, and both fixtures fed in as documents |
 
 Assertions go through `yamldecode(output.rendered_manifest)`, never the raw string: `templatefile`
 output is whitespace- and key-order-sensitive, and string equality would make the suite fail on
