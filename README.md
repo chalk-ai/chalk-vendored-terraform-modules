@@ -58,6 +58,48 @@ features will be added. Use `valkey9` for new clusters.
 
 See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valkey8/README.md).
 
+### AWS Karpenter Modules
+
+Karpenter v1 node resources for a customer-managed EKS cluster, so Chalk Resources V2 nodepools can
+be created from Terraform instead of hand-authored CRDs. Both modules assume Karpenter v1.x is
+already installed; neither installs or manages the controller.
+
+They are split because Karpenter v1 accepts subnets **only** on the EC2NodeClass — the NodePool
+schema has no subnet field — and one node class is referenced by many pools.
+
+#### EC2NodeClass (`modules/aws/karpenter/ec2nodeclass`)
+
+Renders one `karpenter.k8s.aws/v1` EC2NodeClass from a YAML template.
+
+**Features**:
+- Subnets as a required input, in Karpenter's native `subnetSelectorTerms` shape — explicit IDs or
+  `karpenter.sh/discovery` tag discovery
+- AL2023 via an `amiSelectorTerms` alias, pinnable to a dated release
+- IMDSv2-only metadata options, gp3 root volume, optional RAID0 instance store
+- Substitutable manifest template for clusters that need something else
+
+**Key Outputs**:
+- `name`: feed to the nodepool module's `ec2nodeclass_name` — carries the dependency edge
+- `node_class_ref`: drop-in `{group, kind, name}` for a NodePool's `nodeClassRef`
+
+See [`modules/aws/karpenter/ec2nodeclass/README.md`](modules/aws/karpenter/ec2nodeclass/README.md).
+
+#### NodePool (`modules/aws/karpenter/nodepool`)
+
+Renders one `karpenter.sh/v1` NodePool against a node class created by the module above or one that
+already exists in the cluster.
+
+**Features**:
+- Caller-supplied `requirements`, `limits`, `taints`, `labels` and `weight` — no hardcoded Chalk
+  requirement list, so machine families can be pinned per pool
+- Emits no Karpenter default it was not asked for: `disruption` and `expireAfter` stay absent unless set
+- Optional plan-time lookup of the referenced node class, to fail before apply when it is missing
+
+**Key Outputs**:
+- `name`, `rendered_manifest`
+
+See [`modules/aws/karpenter/nodepool/README.md`](modules/aws/karpenter/nodepool/README.md).
+
 ## Usage
 
 ### Chalk Management Role
@@ -110,6 +152,40 @@ output "secret_name" {
 }
 ```
 
+### Karpenter node resources
+
+One node class, many pools. The `name` output is what orders the pools after the class.
+
+```hcl
+module "karpenter_nodeclass" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/ec2nodeclass?ref=v0.3.0"
+
+  cluster_name   = "example-cluster"
+  node_role_name = "example-cluster-Managed-Node-Role"
+
+  subnet_selector_terms = [
+    { id = "subnet-xxxxx" },
+    { id = "subnet-yyyyy" },
+  ]
+}
+
+# Latency-sensitive pool pinning a machine family.
+module "karpenter_pool_online" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/nodepool?ref=v0.3.0"
+
+  name              = "online-c7a"
+  ec2nodeclass_name = module.karpenter_nodeclass.name
+
+  requirements = [
+    { key = "karpenter.k8s.aws/instance-family", operator = "In", values = ["c7a"] },
+    { key = "kubernetes.io/arch",                operator = "In", values = ["amd64"] },
+    { key = "karpenter.sh/capacity-type",        operator = "In", values = ["on-demand"] },
+  ]
+  limits = { cpu = "500", memory = "5000Gi" }
+  weight = 20
+}
+```
+
 ## Versioning
 
 Modules are consumed by git tag. **Always pin `?ref=<tag>`** — never `?ref=main`.
@@ -118,6 +194,7 @@ Modules are consumed by git tag. **Always pin `?ref=<tag>`** — never `?ref=mai
 |-----|-------|
 | `v0.1.0` | Last release containing `modules/aws/online-store/valkey` |
 | `v0.2.0` | Removed `modules/aws/online-store/valkey` in favour of `valkey8` / `valkey9` |
+| `v0.3.0` | Added `modules/aws/karpenter/ec2nodeclass` and `modules/aws/karpenter/nodepool` |
 
 ## Migrating from the `valkey` module
 
