@@ -422,6 +422,10 @@ run "override_both_applied" {
 
 # --------------------------------------------------------------------------------------------------
 # Inheritance: a null override input means "whatever the document says", never "".
+#
+# The whole-document round-trip run below opts out of chalk_managed, because "unchanged" is exactly
+# what it asserts and the stamp is a deliberate change. The stamp's effect on a document is asserted
+# in chalk_managed.tftest.hcl instead, where it is the subject rather than a contaminant.
 # --------------------------------------------------------------------------------------------------
 
 run "inheritance_null_name_keeps_the_documents_name" {
@@ -484,6 +488,7 @@ run "inheritance_both_null_emits_the_document_unchanged" {
   variables {
     name              = null
     ec2nodeclass_name = null
+    chalk_managed     = false
     manifest_yaml     = <<-EOT
       apiVersion: karpenter.sh/v1
       kind: NodePool
@@ -545,6 +550,10 @@ run "inheritance_both_null_emits_the_document_unchanged" {
 # --------------------------------------------------------------------------------------------------
 # Passthrough: every field this module does NOT own survives decode/merge/re-encode untouched. These
 # are the fields that are portable between clusters, which is why the override set excludes them.
+#
+# chalk_managed is off so that "does NOT own" is true of the whole label map. With the toggle on the
+# module owns exactly one label key and the rest of this document still passes through, which is what
+# the "other labels are preserved" runs in chalk_managed.tftest.hcl assert.
 # --------------------------------------------------------------------------------------------------
 
 run "passthrough_every_unowned_field_survives_the_round_trip" {
@@ -552,6 +561,7 @@ run "passthrough_every_unowned_field_survives_the_round_trip" {
 
   variables {
     ec2nodeclass_name = "override-class"
+    chalk_managed     = false
     manifest_yaml     = <<-EOT
       apiVersion: karpenter.sh/v1
       kind: NodePool
@@ -1198,12 +1208,18 @@ run "fixture_a_renamed_and_retargeted" {
 #
 # The documents are built with yamlencode rather than pasted: 101 hand-written entries would be
 # unreadable and would invite a typo that made the run pass for the wrong reason.
+#
+# Both runs opt out of chalk_managed, for the same reason as their template-mode twins in
+# combinations.tftest.hcl: the stamped label takes one of the same 100 slots, so with the toggle on
+# the boundary is 60 + 39, and a pair measured under two different settings is not a boundary pair.
+# The moved boundary has its own YAML-mode pair in chalk_managed.tftest.hcl.
 # --------------------------------------------------------------------------------------------------
 
 run "yaml_mode_sixty_requirements_plus_forty_labels_accepted" {
   command = plan
 
   variables {
+    chalk_managed = false
     manifest_yaml = yamlencode({
       apiVersion = "karpenter.sh/v1"
       kind       = "NodePool"
@@ -1234,6 +1250,7 @@ run "yaml_mode_sixty_requirements_plus_forty_one_labels_rejected" {
   command = plan
 
   variables {
+    chalk_managed = false
     manifest_yaml = yamlencode({
       apiVersion = "karpenter.sh/v1"
       kind       = "NodePool"

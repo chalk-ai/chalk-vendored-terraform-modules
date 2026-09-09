@@ -105,14 +105,20 @@ run "budget_schedule_with_duration_accepted" {
 # --------------------------------------------------------------------------------------------------
 # Labels propagate onto every NodeClaim as requirements and count toward the SAME MaxItems=100 cap as
 # spec.requirements. 60 + 40 is the boundary; 60 + 41 is over it, even though neither input alone is.
+#
+# BOTH runs opt out of chalk_managed, not just the accepted one. The stamped label takes one of the
+# same 100 slots, so with the toggle on the boundary moves to 60 + 39 -- and a pair measured under
+# different settings would not be a boundary pair at all: 60 + 41 would still be rejected, but for a
+# count the caller did not write. The moved boundary is covered in chalk_managed.tftest.hcl.
 # --------------------------------------------------------------------------------------------------
 
 run "sixty_requirements_plus_forty_labels_accepted" {
   command = plan
 
   variables {
-    requirements = [for i in range(60) : { key = "k${i}", operator = "Exists" }]
-    labels       = { for i in range(40) : "label-${i}" => "v" }
+    requirements  = [for i in range(60) : { key = "k${i}", operator = "Exists" }]
+    labels        = { for i in range(40) : "label-${i}" => "v" }
+    chalk_managed = false
   }
 
   assert {
@@ -129,8 +135,9 @@ run "sixty_requirements_plus_forty_one_labels_rejected" {
   command = plan
 
   variables {
-    requirements = [for i in range(60) : { key = "k${i}", operator = "Exists" }]
-    labels       = { for i in range(41) : "label-${i}" => "v" }
+    requirements  = [for i in range(60) : { key = "k${i}", operator = "Exists" }]
+    labels        = { for i in range(41) : "label-${i}" => "v" }
+    chalk_managed = false
   }
 
   expect_failures = [kubectl_manifest.this]
