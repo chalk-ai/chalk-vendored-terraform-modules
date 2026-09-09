@@ -161,11 +161,14 @@ run "lookup_false_removes_the_data_source_from_the_plan" {
   }
 }
 
-run "lookup_defaults_to_true" {
+# Defaults OFF. `true` cannot work when the node class is created in the same run -- not even via
+# the module-output reference -- because the read is not deferred. Proven against a real cluster
+# 2026-09-09; see the comment on the data source in main.tf.
+run "lookup_defaults_to_false" {
   command = plan
 
   assert {
-    condition     = length(data.kubectl_manifest.ec2nodeclass) == 1
-    error_message = "lookup_ec2nodeclass no longer defaults to true"
+    condition     = length(data.kubectl_manifest.ec2nodeclass) == 0
+    error_message = "lookup_ec2nodeclass no longer defaults to false, which breaks the canonical two-module example on first plan"
   }
 }

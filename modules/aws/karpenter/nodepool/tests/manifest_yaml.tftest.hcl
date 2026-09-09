@@ -1009,8 +1009,9 @@ run "lookup_reads_the_name_from_the_variable" {
   command = plan
 
   variables {
-    ec2nodeclass_name = "override-class"
-    manifest_yaml     = <<-EOT
+    ec2nodeclass_name   = "override-class"
+    lookup_ec2nodeclass = true # the default is off; these runs exercise the lookup itself
+    manifest_yaml       = <<-EOT
       apiVersion: karpenter.sh/v1
       kind: NodePool
       metadata:
@@ -1035,8 +1036,9 @@ run "lookup_inherits_the_name_from_the_document" {
   command = plan
 
   variables {
-    ec2nodeclass_name = null
-    manifest_yaml     = <<-EOT
+    ec2nodeclass_name   = null
+    lookup_ec2nodeclass = true # the default is off; these runs exercise the lookup itself
+    manifest_yaml       = <<-EOT
       apiVersion: karpenter.sh/v1
       kind: NodePool
       metadata:

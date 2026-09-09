@@ -36,9 +36,9 @@ variable "ec2nodeclass_name" {
 }
 
 variable "lookup_ec2nodeclass" {
-  description = "Read the referenced EC2NodeClass with a data source so a missing node class fails the plan instead of the apply. Set to false when the node class is created elsewhere in the same root module and therefore does not exist yet at plan time; the 2.x kubectl data source has no wait_for to absorb that. In YAML mode the name read is ec2nodeclass_name if set, otherwise the document's own nodeClassRef.name."
+  description = "Read the referenced EC2NodeClass with a data source so a missing node class fails the plan instead of the apply. ONLY usable when the node class ALREADY EXISTS -- defaults to false because the common case is creating it in the same run, and the read cannot be deferred to cover that (see main.tf). In YAML mode the name read is ec2nodeclass_name if set, otherwise the document's own nodeClassRef.name."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "requirements" {

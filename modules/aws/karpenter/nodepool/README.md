@@ -224,7 +224,7 @@ document's own value, or its absence, survives exactly. See
 
 `lookup_ec2nodeclass` keeps working. The name it reads is `ec2nodeclass_name` when set, otherwise the
 document's own `nodeClassRef.name`. If neither yields a name and the lookup is on, the plan fails
-saying so; set `lookup_ec2nodeclass = false` if that is intentional.
+saying so; leave `lookup_ec2nodeclass` off (the default) if that is intentional.
 
 ### Inputs YAML mode would ignore are rejected
 
@@ -271,19 +271,28 @@ it remains the default. If it does not, YAML mode is the shorter path for a pool
 
 `ec2nodeclass_name` accepts both forms and they behave differently on purpose.
 
-| `ec2nodeclass_name` is… | The `lookup_ec2nodeclass` read happens | A missing node class surfaces as |
+| `ec2nodeclass_name` is… | The `lookup_ec2nodeclass` read happens | Usable? |
 |---|---|---|
-| `module.karpenter_nodeclass.name` | deferred to **apply** — the data source configuration directly depends on a resource that is changing in the current plan | cannot happen: the dependency edge orders the pool after the node class |
-| a literal string | at **plan** | a plan-time error, fail-fast |
+| a literal name for a node class that **already exists** | at **plan** | yes — this is the only supported use |
+| `module.karpenter_nodeclass.name`, class created in the same run | at **plan**, against a class that does not exist yet | **no** — the plan fails |
 
-The ordering guarantee in the first row exists only because the node class module's `name` output is
-read off the applied resource rather than echoed from its input variable. Both forms produce the
-identical string; only one creates a graph edge. This module's own `name` output follows the same
-rule for the same reason.
+**`lookup_ec2nodeclass` defaults to `false`, and only works against a node class that already
+exists.** An earlier version of this README claimed a module-output reference defers the read to
+apply. It does not, and a real plan disproved it:
 
-Because the deferral is a property of the *caller's* dependency graph, it is not unit-testable with
-`mock_provider` and the test suite does not pretend otherwise. What the suite does assert is that the
-data source is in the plan when `lookup_ec2nodeclass` is true and out of it when false.
+```
+module.pool_template.data.kubectl_manifest.ec2nodeclass[0]: Reading...
+Error: manifest not found: karpenter.k8s.aws/v1/EC2NodeClass /e2e-inf2110-nc-tpl
+```
+
+`kubectl_manifest` exports `name` extracted from `yaml_body`, and `yaml_body` is a `templatefile()`
+of static inputs, so the provider computes it during **plan** — the plan shows a concrete string
+while `id`, `uid` and `namespace` show `(known after apply)`. With every argument known, Terraform
+reads the data source eagerly. Graph adjacency alone does not defer a data read; unknown values do.
+The 2.x data source has no `wait_for` to absorb the gap either.
+
+That is why the default is off: the canonical two-module example creates the class in the same run,
+and a default of `true` would break it on first plan.
 
 ### When to set `lookup_ec2nodeclass = false`
 
@@ -454,7 +463,7 @@ its own variable.
 |------|------|---------|-------------|
 | name | string | `null` | `metadata.name` of the NodePool. A DNS-1123 label, at most 63 characters. **Required in template mode**; in YAML mode it overrides the document's name, and null keeps it |
 | ec2nodeclass_name | string | `null` | Name of the `EC2NodeClass` to schedule against. A literal name, or the node class module's `name` output. **Required in template mode**; in YAML mode it overrides the document's `nodeClassRef.name`, and null keeps it |
-| lookup_ec2nodeclass | bool | `true` | Read the referenced `EC2NodeClass` so a missing one fails the plan. Set false when it is created elsewhere in the same root module |
+| lookup_ec2nodeclass | bool | `false` | Opt-in plan-time check that the referenced `EC2NodeClass` exists. **Only valid when the class already exists** — the read is not deferred, so leaving it off is required whenever the class is created in the same run |
 | chalk_managed | bool | `true` | Stamp `chalk.ai/managed-by: chalk` into `spec.template.metadata.labels`. Gates whether Chalk's dashboard may create/update/delete the pool, and is read by Chalk billing. **Both modes.** Forced over any conflicting value when true; the key is untouched when false. Occupies one of the 100 requirements-plus-labels slots, leaving 99 — see [Chalk-managed pools](#chalk-managed-pools) |
 | manifest_yaml | string | `null` | A finished NodePool document as YAML. Setting it selects **YAML mode**. Mutually exclusive with `manifest_path` |
 | requirements | list(object) | `null` → `[]` | `spec.template.spec.requirements`: `key`, `operator`, optional `values`, optional `minValues`. Template mode only |

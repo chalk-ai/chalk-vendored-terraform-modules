@@ -177,11 +177,24 @@ locals {
   cap_label_count       = local.yaml_mode ? try(length(local.merged.spec.template.metadata.labels), 0) : length(local.template_vars.labels)
 }
 
-# Fail fast when the referenced EC2NodeClass is absent. The 2.x data source has no wait_for: if the
-# node class is created elsewhere in the same root module it will not exist when this reads, which is
-# what lookup_ec2nodeclass = false is for. When ec2nodeclass_name comes from the node class module's
-# `name` output the read is deferred to apply, because the block then depends on a resource that is
-# changing in the current plan -- and in that case the dependency edge already guarantees ordering.
+# Opt-in fail-fast when the referenced EC2NodeClass is absent. Defaults OFF, and only works when the
+# node class ALREADY EXISTS.
+#
+# An earlier version of this comment claimed that passing the ec2nodeclass module's `name` output
+# defers the read to apply, because the block then depends on a resource changing in the plan. That
+# is WRONG, and a real plan disproved it (2026-09-09, e2e harness):
+#
+#   module.pool_template.data.kubectl_manifest.ec2nodeclass[0]: Reading...
+#   Error: manifest not found: karpenter.k8s.aws/v1/EC2NodeClass /e2e-inf2110-nc-tpl
+#
+# kubectl_manifest exports `name` extracted from `yaml_body`, and yaml_body is a templatefile() of
+# static inputs, so the provider computes it during PLAN -- the plan shows a concrete string while
+# id/uid/namespace show "known after apply". With every argument known, Terraform reads the data
+# source eagerly. Graph adjacency alone does not defer a data read; unknown values do. The 2.x
+# kubectl data source also has no wait_for to absorb the gap.
+#
+# Hence the default is false: the canonical two-module example creates the class in the same run,
+# and a default of true would break it on first plan.
 #
 # The count also drops to zero when no name could be resolved at all, so that the unresolvable case
 # surfaces as this module's own precondition message instead of a missing-required-argument error.
