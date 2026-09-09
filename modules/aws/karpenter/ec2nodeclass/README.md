@@ -22,6 +22,8 @@ instance tags**. Scheduling — requirements, taints, limits, weight, disruption
   limit
 - The manifest body is a **template file** rendered with `templatefile()`, so the YAML is the
   reviewable artefact and a caller can substitute their own file
+- An opt-in **YAML input mode**: hand the module a real `EC2NodeClass` document and it overrides
+  only the fields that cannot be portable between clusters, emitting the rest verbatim
 - A `name` output derived from the applied resource, which is what orders a consuming `NodePool`
   after the node class exists
 - Heavy plan-time input validation, and a credential-free test suite that needs no cluster
@@ -231,6 +233,91 @@ key of the same name wins. With no caller tags, `spec.tags` is exactly the disco
 
 Keys are validated at 128 characters and values at 256, the AWS limits.
 
+## YAML input mode
+
+Set `manifest_yaml` to a complete `EC2NodeClass` document and the module switches from rendering a
+template to **merging into your document**. The rule, stated once:
+
+> In YAML mode the module overrides only what cannot be portable between clusters. Everything else
+> in the caller's document is emitted unchanged.
+
+The intended use is lift-and-shift: take the node class a cluster already runs, and stand it up on
+another cluster's subnets, security groups and node role without rewriting it as module inputs.
+
+```hcl
+module "karpenter_nodeclass" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/ec2nodeclass?ref=v0.3.0"
+
+  manifest_yaml = file("${path.root}/nodeclass.yaml")
+
+  # Only the cluster-bound fields. Everything else comes from the document.
+  cluster_name          = "example-cluster"
+  node_role_name        = "example-cluster-Managed-Node-Role"
+  subnet_selector_terms = [{ id = "subnet-xxxxx" }, { id = "subnet-yyyyy" }]
+}
+```
+
+There is deliberately **no second path variable**. You already hold the document, so
+`file("${path.root}/nodeclass.yaml")` covers the file case without this module guessing a base
+directory. `manifest_yaml` and `manifest_path` select different modes and setting both is an error.
+
+### What is overridden
+
+Each override applies **only when its input is non-null**. Leave an input out and the document's own
+value survives — that is the whole point, not a fallback.
+
+| Document path | Overridden from | When |
+|---|---|---|
+| `metadata.name` | `var.name` | `name != null` |
+| `spec.role` | `var.node_role_name` | `node_role_name != null` |
+| `spec.subnetSelectorTerms` | `var.subnet_selector_terms`, **replaced wholesale** | `subnet_selector_terms != null` |
+| `spec.securityGroupSelectorTerms` | the two tag terms derived from `var.cluster_name` | `cluster_name != null` |
+| `spec.tags` | `{ karpenter.sh/discovery = cluster_name }` + `var.tags`, merged **over** the document's tags | either is non-empty |
+
+`subnetSelectorTerms` is replaced and not merged because subnet selection is a single decision: a
+half-overridden term list would select subnets from two different clusters.
+
+`spec.tags` is the one field that merges rather than replaces, so a document's own tags survive
+alongside the discovery tag. A document that carried no `spec.tags` and gets no override does not
+acquire an empty `tags: {}` — emitting a key you never wrote is not emitting it unchanged.
+
+### What is untouched
+
+`amiSelectorTerms`, `blockDeviceMappings`, `metadataOptions`, `instanceStorePolicy`, `userData` and
+anything else the document carries are emitted verbatim. None of them is cluster-bound, so the
+module has no business having an opinion about them here — including its own template-mode opinions.
+A document that permits IMDSv1 keeps permitting IMDSv1.
+
+### Inputs YAML mode cannot act on are rejected
+
+`ami_alias`, `boot_volume_size`, `instance_store_policy` and `manifest_path` are template-only.
+Setting any of them alongside `manifest_yaml` **fails at plan** rather than being silently dropped.
+Silence is the dangerous outcome: nothing about the applied object would tell a caller who passed
+`boot_volume_size = "50Gi"` that their document's `200Gi` is what actually shipped.
+
+Every optional input defaults to `null` for this reason — with a non-null default, "did the caller
+set this?" is unanswerable, and the module could not tell an ignored input from an unset one. The
+real template-mode defaults (`al2023`, `al2023@latest`, `50Gi`) are resolved in `locals`, so
+template-mode output is byte-identical to what it was before this mode existed.
+
+### The document is validated structurally
+
+Rejected at plan, with a distinct message for each: a document that is not parseable YAML; one that
+decodes to a scalar or a sequence rather than a mapping; a missing or non-`EC2NodeClass` `kind`; a
+missing `apiVersion`; a **`v1beta1`** group — called out on its own because it is the likely paste,
+and because the v1beta1 schema needs converting rather than relabelling; and a missing `spec`.
+
+### Comments and key order are lost
+
+YAML mode decodes your document, merges into the result and re-encodes it with `yamlencode()`. That
+round trip drops **comments and your key order**, and normalises quoting. Values survive intact —
+including multi-line `userData` block scalars — but the applied YAML will not look like the file you
+wrote.
+
+This is inherent to merging into a parsed document, and it is why **template mode remains the
+default and the reviewable-artefact path**. If the diff a reviewer sees matters more than reusing an
+existing document, use `manifest_path` instead.
+
 ## Substituting your own manifest template
 
 The manifest body is rendered from `templates/ec2nodeclass.yaml.tftpl` with `templatefile()` rather
@@ -239,18 +326,26 @@ template with a `%{ for ~}` directive. Point `manifest_path` at your own file to
 node class — an `ssm` AMI term, a second block device, a `kubelet` block — while keeping this
 module's validation, naming and output contract.
 
+`manifest_path` is **template mode only** and is mutually exclusive with `manifest_yaml`. Reach for
+it when you want a rendered, reviewable artefact parameterised by this module's inputs; reach for
+`manifest_yaml` when you already have a finished document you want to keep.
+
 The template receives exactly these variables:
 
 | Template variable | Source |
 |---|---|
-| `name` | `var.name` |
-| `ami_alias` | `var.ami_alias` |
+| `name` | `var.name`, or `al2023` when null |
+| `ami_alias` | `var.ami_alias`, or `al2023@latest` when null |
 | `node_role_name` | `var.node_role_name` |
 | `cluster_name` | `var.cluster_name` |
 | `subnet_selector_terms` | `var.subnet_selector_terms` |
-| `boot_volume_size` | `var.boot_volume_size` |
+| `boot_volume_size` | `var.boot_volume_size`, or `50Gi` when null |
 | `instance_store_policy` | `var.instance_store_policy` |
 | `tags` | `var.tags` merged over the default discovery tag |
+
+The three defaults are resolved in `locals` rather than on the variables, so that YAML mode can tell
+a caller-set value from an unset one. A substituted template sees the resolved value, exactly as the
+bundled one does.
 
 Every interpolation in the bundled template goes through `jsonencode()`. JSON is a subset of YAML,
 so that quotes and escapes caller-supplied strings correctly without hand-rolling YAML escaping
@@ -276,6 +371,7 @@ calls: **no kubeconfig, no cluster and no AWS credentials are needed.** Every ru
 | `tests/identifiers.tftest.hcl` | `cluster_name`, `node_role_name`, `name`, including length boundaries |
 | `tests/ami_and_disk.tftest.hcl` | `ami_alias`, `boot_volume_size`, `instance_store_policy`, `tags`, `manifest_path` |
 | `tests/fixtures.tftest.hcl` | Structural replay of the captured customer node class in `tests/fixtures/` |
+| `tests/manifest_yaml.tftest.hcl` | YAML mode: mode selection, document decoding and structure, each override, each inheritance, passthrough, rejected inputs, template-mode requiredness, and the captured node class fed back in as a document |
 
 Three conventions the suite follows, each for a reason worth knowing before editing it:
 
@@ -287,6 +383,11 @@ Three conventions the suite follows, each for a reason worth knowing before edit
   each. The module's charset and length rules are kept disjoint for the same reason.
 - **Every negative value is correctly typed.** `expect_failures` catches only custom validation
   conditions; a type mismatch errors the test instead of passing it.
+- **Two failure addresses, and the difference is not cosmetic.** Shape rules are `validation` blocks
+  and fail at `var.<name>`. Every cross-variable rule — mode selection, template-mode requiredness,
+  and the rejection of template-only inputs in YAML mode — is a `lifecycle` precondition on
+  `kubectl_manifest.this` and fails at that address, because a `validation` block may only reference
+  the variable it is attached to.
 
 Optionality is asserted through the rendered manifest with `!can(...)` rather than through a
 resource attribute, because `mock_provider` fabricates a value for every computed attribute — an
@@ -294,17 +395,23 @@ resource attribute, because `mock_provider` fabricates a value for every compute
 
 ## Inputs
 
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| subnet_selector_terms | list(object({ id = optional(string), tags = optional(map(string)) })) | _required_ | Karpenter `spec.subnetSelectorTerms`, verbatim. Each term must set exactly one of `id` or a non-empty `tags` map. At least one term. |
-| cluster_name | string | _required_ | EKS cluster name. Feeds both `securityGroupSelectorTerms` and the default discovery tag. 1–100 characters, starting alphanumeric. |
-| node_role_name | string | _required_ | Node IAM role **name**, not an ARN. 1–64 characters from `[A-Za-z0-9_+=,.@-]`. |
-| name | string | `"al2023"` | `metadata.name` of the EC2NodeClass. Lowercase RFC 1123 label, at most 63 characters. |
-| ami_alias | string | `"al2023@latest"` | `spec.amiSelectorTerms[0].alias`, as `family@version`. Implies `amiFamily`. |
-| boot_volume_size | string | `"50Gi"` | `volumeSize` of the gp3 `/dev/xvda` root volume, as a unit-suffixed Kubernetes quantity. |
-| instance_store_policy | string | `null` | `spec.instanceStorePolicy`. `RAID0` or null. Omitted from the manifest when null. |
-| tags | map(string) | `{}` | Extra instance tags, merged over the default `karpenter.sh/discovery = cluster_name`. Keys ≤ 128 chars, values ≤ 256. |
-| manifest_path | string | `null` | Path to the manifest template. Null uses the template bundled with this module. |
+Every input defaults to `null` except `tags`. Requiredness is **per mode** and therefore cannot be
+expressed as an absent default — a Terraform variable is required or optional module-wide — so the
+three template-mode requirements are enforced as `lifecycle` preconditions and fail at plan with the
+module's own message rather than as Terraform's `No value for required variable`.
+
+| Name | Type | Default | Template mode | YAML mode | Description |
+|------|------|---------|---------------|-----------|-------------|
+| subnet_selector_terms | list(object({ id = optional(string), tags = optional(map(string)) })) | `null` | **required** | optional override | Karpenter `spec.subnetSelectorTerms`, verbatim. Each term must set exactly one of `id` or a non-empty `tags` map. At least one term. In YAML mode it replaces the document's terms wholesale. |
+| cluster_name | string | `null` | **required** | optional override | EKS cluster name. Feeds both `securityGroupSelectorTerms` and the default discovery tag. 1–100 characters, starting alphanumeric. |
+| node_role_name | string | `null` | **required** | optional override | Node IAM role **name**, not an ARN. 1–64 characters from `[A-Za-z0-9_+=,.@-]`. |
+| name | string | `null` | optional, renders `al2023` | optional override | `metadata.name` of the EC2NodeClass. Lowercase RFC 1123 label, at most 63 characters. |
+| tags | map(string) | `{}` | optional | merged over the document's tags | Extra instance tags, merged over the default `karpenter.sh/discovery = cluster_name`. Keys ≤ 128 chars, values ≤ 256. |
+| manifest_yaml | string | `null` | — | **selects YAML mode** | A complete `EC2NodeClass` document. Mutually exclusive with `manifest_path`. Validated structurally; comments and key order are lost on re-encode. |
+| ami_alias | string | `null` | optional, renders `al2023@latest` | **rejected** | `spec.amiSelectorTerms[0].alias`, as `family@version`. Implies `amiFamily`. |
+| boot_volume_size | string | `null` | optional, renders `50Gi` | **rejected** | `volumeSize` of the gp3 `/dev/xvda` root volume, as a unit-suffixed Kubernetes quantity. |
+| instance_store_policy | string | `null` | optional | **rejected** | `spec.instanceStorePolicy`. `RAID0` or null. Omitted from the manifest when null. |
+| manifest_path | string | `null` | optional | **rejected** | Path to the manifest template. Null uses the template bundled with this module. |
 
 ## Outputs
 
@@ -314,4 +421,4 @@ resource attribute, because `mock_provider` fabricates a value for every compute
 | node_class_ref | `{ group, kind, name }` — a drop-in for a NodePool's `spec.template.spec.nodeClassRef`. |
 | uid | `metadata.uid` assigned by the API server. |
 | id | Terraform resource ID of the applied manifest; useful as an explicit `depends_on` target. |
-| rendered_manifest | The templated YAML exactly as submitted. Parse it with `yamldecode`; do not match the string. |
+| rendered_manifest | The YAML exactly as submitted: the rendered template in template mode, `yamlencode()` of the merged document in YAML mode. Parse it with `yamldecode`; do not match the string. |
