@@ -38,6 +38,6 @@ output "id" {
 }
 
 output "rendered_manifest" {
-  description = "The templated EC2NodeClass YAML, exactly as submitted to the cluster. Exported so tests and reviewers can assert on the manifest without a cluster; parse it with `yamldecode` rather than matching the string, which is whitespace- and key-order-sensitive."
+  description = "The EC2NodeClass YAML exactly as submitted to the cluster: the rendered template in template mode, or `yamlencode()` of the merged document in YAML mode. Exported so tests and reviewers can assert on the manifest without a cluster; parse it with `yamldecode` rather than matching the string, which is whitespace- and key-order-sensitive -- and doubly so in YAML mode, where re-encoding drops the caller's comments and key order."
   value       = local.rendered_manifest
 }
