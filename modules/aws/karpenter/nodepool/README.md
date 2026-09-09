@@ -138,7 +138,7 @@ from disk is the caller's job:
 
 ```hcl
 module "pool_default" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/nodepool?ref=v0.4.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/nodepool?ref=v0.3.0"
 
   manifest_yaml = file("${path.root}/nodepool.yaml")
 

@@ -76,7 +76,8 @@ Renders one `karpenter.k8s.aws/v1` EC2NodeClass from a YAML template.
   `karpenter.sh/discovery` tag discovery
 - AL2023 via an `amiSelectorTerms` alias, pinnable to a dated release
 - IMDSv2-only metadata options, gp3 root volume, optional RAID0 instance store
-- Substitutable manifest template for clusters that need something else
+- Two input modes: an HCL interface rendered through a YAML template, or a real EC2NodeClass
+  document you already have, patched in place
 
 **Key Outputs**:
 - `name`: feed to the nodepool module's `ec2nodeclass_name` — carries the dependency edge
@@ -94,6 +95,8 @@ already exists in the cluster.
   requirement list, so machine families can be pinned per pool
 - Emits no Karpenter default it was not asked for: `disruption` and `expireAfter` stay absent unless set
 - Optional plan-time lookup of the referenced node class, to fail before apply when it is missing
+- Two input modes, as above: HCL through a template, or an existing NodePool document retargeted at
+  a new node class
 
 **Key Outputs**:
 - `name`, `rendered_manifest`
@@ -185,6 +188,32 @@ module "karpenter_pool_online" {
   weight = 20
 }
 ```
+
+#### Bringing your own YAML
+
+Both modules also accept a real manifest instead of HCL. The module decodes it, overrides only what
+cannot be portable between clusters — for a node class that is `metadata.name`, `spec.role`,
+`subnetSelectorTerms`, `securityGroupSelectorTerms` and the discovery tag — and emits everything else
+verbatim.
+
+```hcl
+module "karpenter_nodeclass" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/ec2nodeclass?ref=v0.3.0"
+
+  # Your existing node class, straight from `kubectl get ec2nodeclass al2023 -o yaml`.
+  manifest_yaml = file("${path.root}/nodeclass.yaml")
+
+  # Only the environment-specific bits are supplied here; the rest of the
+  # document -- amiSelectorTerms, blockDeviceMappings, userData -- is untouched.
+  cluster_name          = "example-cluster"
+  node_role_name        = "example-cluster-Managed-Node-Role"
+  subnet_selector_terms = [{ id = "subnet-xxxxx" }]
+}
+```
+
+Decoding and re-emitting loses comments and key order, so template mode stays the default and remains
+the path where the YAML is the reviewable artefact. Setting an input the chosen mode would ignore is
+an error rather than a silent no-op.
 
 ## Versioning
 
