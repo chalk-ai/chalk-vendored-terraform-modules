@@ -1,0 +1,41 @@
+# Characterization fixture: an EC2NodeClass as it exists on a live customer cluster.
+# Anonymised — all identifiers are placeholders. Server-populated metadata
+# (uid, resourceVersion, creationTimestamp, hashes, last-applied-configuration)
+# and the whole status block are stripped; none of it is authored input.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: al2023
+spec:
+  amiSelectorTerms:
+    - alias: al2023@latest
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        deleteOnTermination: true
+        volumeSize: 50Gi
+        volumeType: gp3
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required
+  role: example-cluster-Managed-Node-Role
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: example-cluster
+    - tags:
+        aws:eks:cluster-name: example-cluster
+  subnetSelectorTerms:
+    - id: subnet-xxxxx
+    - id: subnet-yyyyy
+    - id: subnet-zzzzz
+  tags:
+    karpenter.sh/discovery: example-cluster
+  userData: |
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      kubelet:
+        config:
+          registryPullQPS: 0

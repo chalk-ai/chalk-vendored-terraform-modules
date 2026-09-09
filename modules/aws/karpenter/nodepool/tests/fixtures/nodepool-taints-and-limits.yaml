@@ -1,0 +1,40 @@
+# Characterization fixture B: a NodePool with a taint and cpu+memory limits,
+# and a deliberately minimal requirements set. Anonymised; server metadata and
+# status stripped.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: chalk-nodepool-al2023
+spec:
+  disruption:
+    budgets:
+      - nodes: 10%
+    consolidateAfter: 0s
+    consolidationPolicy: WhenEmptyOrUnderutilized
+  limits:
+    cpu: "500"
+    memory: 5000Gi
+  template:
+    metadata:
+      labels:
+        chalk.ai/managed-by: chalk
+    spec:
+      expireAfter: 720h0m0s
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: al2023
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            - on-demand
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - amd64
+      taints:
+        - effect: NoSchedule
+          key: chalk.ai/managed-by
+          value: chalk
+  weight: 20
