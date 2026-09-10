@@ -53,9 +53,9 @@ run "an_unrecognised_dataplane_version_creates_no_chalk_nap" {
     chalk_dataplane_version = "CHALK_DATAPLANE_VERSION_V2 "
   }
 
-  # Documented sharp edge, inherited from the source: the comparison is an exact string
-  # match with no validation behind it, so a near-miss value silently yields nine objects
-  # instead of ten rather than failing.
+  # Documented sharp edge: the comparison is an exact string match with no validation
+  # behind it, so a near-miss value silently yields nine objects instead of ten rather
+  # than failing.
   assert {
     condition     = length(kubectl_manifest.internal_node_pools) == 3
     error_message = "the dataplane gate is no longer an exact string match; if that is intentional, update the README, which documents the near-miss behaviour"

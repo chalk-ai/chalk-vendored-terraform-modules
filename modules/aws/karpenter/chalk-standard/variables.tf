@@ -1,7 +1,7 @@
-# This module is deliberately almost input-free. It is a direct port of Chalk's own
-# standard Karpenter objects, so every shape decision the source hardcodes is a
-# `local` in main.tf rather than a variable. Only genuinely per-cluster facts --
-# where nodes go, and what the cluster is called -- are inputs.
+# This module is deliberately almost input-free. It creates one fixed, opinionated
+# set of Karpenter objects, so every shape decision is a `local` in main.tf rather
+# than a variable. Only genuinely per-cluster facts -- where nodes go, and what the
+# cluster is called -- are inputs.
 
 variable "subnets" {
   description = <<-EOT
@@ -73,8 +73,8 @@ variable "chalk_dataplane_version" {
     `chalk.ai/workload-type` toleration.
 
     Any other value, including `null`, leaves `chalk-nap` uncreated. The comparison is
-    an exact string match, as in the source, so a misspelling silently produces nine
-    objects instead of ten.
+    an exact string match, so a misspelling silently produces nine objects instead of
+    ten.
   EOT
   type        = string
   default     = null

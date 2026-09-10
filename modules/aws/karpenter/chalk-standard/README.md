@@ -4,8 +4,8 @@ Terraform module that creates Chalk's **standard** set of Karpenter node resourc
 `EC2NodeClass` objects, six `NodePool` objects and one `RuntimeClass` — on an EKS cluster
 that Chalk does **not** manage.
 
-It is a direct port of the objects Chalk's own pipeline creates, not a generic node-pool
-builder. It takes two required inputs, and everything else is fixed.
+It creates one fixed, opinionated set of objects, not a generic node-pool builder. It takes
+two required inputs, and everything else is fixed.
 
 ## Features
 
@@ -14,7 +14,7 @@ builder. It takes two required inputs, and everything else is fixed.
 - Two required inputs: `subnets` and `cluster_name`. The node role name is derived from
   the cluster name and is the only other thing a caller normally touches.
 - Pool names, labels, taints, requirements, boot volume sizes, disruption policy and
-  vCPU limits are all hardcoded to Chalk's standard values.
+  vCPU limits are all fixed at Chalk's standard values.
 - Optional `chalk-nap` fallback pool for dataplane-v2 clusters, behind one input.
 - Manifests are rendered from YAML template files, so the object that will be applied is
   readable as YAML in the repository rather than assembled by `yamlencode`.
@@ -22,8 +22,8 @@ builder. It takes two required inputs, and everything else is fixed.
 
 ## Why you need this on a cluster Chalk does not manage
 
-On a Chalk-managed cluster these objects come from Chalk's infrastructure pipeline. On a
-self-managed cluster, nothing creates them, and the Chalk UI cannot fill the gap:
+On a Chalk-managed cluster these objects are created for you. On a self-managed cluster,
+nothing creates them, and the Chalk UI cannot fill the gap:
 
 | | Chalk UI | This module |
 |---|---|---|
@@ -41,7 +41,7 @@ This module creates Kubernetes objects only. Everything below must already be tr
 none of it is created or verified here:
 
 - **The Karpenter controller is installed and working** on the cluster, at a v1 chart
-  (1.x). The Helm releases were deliberately not ported; see "What is not ported".
+  (1.x). Installing it is out of scope; see "What this module does not do".
 - **The controller has IAM permission** to launch instances and pass the node role.
 - **The node role exists** and is mapped in the cluster's auth configuration. A node
   launched with an unmapped role never joins.
@@ -120,7 +120,7 @@ Every `NodePool` except `oss-controllers` carries a 128000 vCPU limit and the
 
 ## Why this module is not configurable
 
-The values the upstream source hardcodes are `local`s in `main.tf`, not variables:
+The values that define Chalk's standard shape are `local`s in `main.tf`, not variables:
 `max_cpu`, `create_gvisor_nodeclass`, both boot volume sizes, the disruption policy, the
 weights, and every requirement list.
 
@@ -129,66 +129,72 @@ node-pool builder, and a generic node-pool builder cannot promise that a cluster
 Chalk's standard shape — which is the only thing this module is for. Changing one of them
 means editing this file, which puts the change through review.
 
-If you need node pools that are *not* Chalk's standard set, use the generic
-`modules/aws/karpenter/ec2nodeclass` and `modules/aws/karpenter/nodepool` building blocks
-instead of parameterising this one.
+If you need node pools that are *not* Chalk's standard set, declare them yourself against
+the Karpenter CRDs rather than parameterising this module.
 
-## Deliberate divergences from the sibling karpenter modules
+## Behaviour worth knowing
 
-Three things here will look like bugs to a reviewer who knows the generic
-`ec2nodeclass` and `nodepool` modules. All three are deliberate, and all three follow
-from this module being a **direct port**.
+Things a reviewer is likely to ask about. All of them are deliberate.
 
-### 1. `subnets` is a `list(string)`, not `subnet_selector_terms`
+### `subnets` is a `list(string)`, not selector terms
 
-The sibling `ec2nodeclass` module takes `subnet_selector_terms`, which can select by tag.
-This module takes a plain list of subnet IDs and renders one `{ id = <subnet> }` term per
-element, exactly as the source does. Selecting subnets by tag is not part of Chalk's
-standard shape, and accepting arbitrary selector terms is precisely the generality that
-was rejected.
+The module takes a plain list of subnet IDs and renders one `{ id = <subnet> }` term per
+element into `subnetSelectorTerms`. It cannot select subnets by tag: that is not part of
+Chalk's standard shape, and accepting arbitrary selector terms is precisely the generality
+this module rejects.
 
-### 2. This module emits `disruption` and `expireAfter`; the siblings do not
+### `disruption` and `expireAfter` are emitted explicitly
 
 `consolidationPolicy: WhenEmptyOrUnderutilized`, `consolidateAfter: 0s` and
-`expireAfter: 720h` are all Karpenter CRD defaults. The sibling modules deliberately omit
-them and let the CRD apply the default. This module emits them explicitly because the
-source does, and because a port that renders a *different manifest* from the thing it
-ports is not a port. The practical effect is a visible value in `kubectl get nodepool -o
-yaml` rather than an implicit one, and immunity to a future CRD default change.
+`expireAfter: 720h` currently match the Karpenter CRD defaults, so a manifest that omitted
+them would behave the same way today. They are emitted anyway, so that the applied object
+states its own disruption behaviour instead of relying on server-side defaulting. The
+practical effects: `kubectl get nodepool -o yaml` shows a real value rather than an
+implicit one, and a future change to a CRD default cannot silently change how these pools
+consolidate or expire.
 
 `terminationGracePeriod: 30m` is **not** a CRD default and is load-bearing: Karpenter v1
 leaves node draining unbounded without it, so one undrainable pod can block a rollout
 indefinitely.
 
-### 3. This module sets `upgrade_api_version` and `sensitive_fields`
+### `sensitive_fields = []` does less than it looks
 
-The sibling modules dropped both after checking them against `alekc/kubectl` 2.x. This
-module keeps them, for fidelity:
+Every `NodePool` sets `sensitive_fields = []` with the intent of showing the full spec diff
+in plans rather than the provider default of redacting `spec`. On `alekc/kubectl` v2 that
+argument controls redaction of `yaml_body_parsed` only; it does **not** make `yaml_body`
+non-sensitive, because `yaml_body` is marked sensitive at the schema level regardless. So it
+does not actually make the spec diff visible in a plan.
 
-- `upgrade_api_version = true` on all node classes and pools.
-- `sensitive_fields = []` on all pools, with the source's comment that NodePool specs
-  carry no secrets and the full diff should be visible in plans.
+That is also why this module's outputs are derived from locals rather than read back out of
+the resources, and why the tests wrap every read in `nonsensitive()`. Before removing
+`sensitive_fields`, confirm what it buys on the provider version in use — do not remove it
+on the assumption that it is decorative.
 
-Note that the `sensitive_fields` justification **may predate provider v2**. In
-`alekc/kubectl` v2.4.1, `sensitive_fields` controls redaction of `yaml_body_parsed`; it
-does not make `yaml_body` non-sensitive, because `yaml_body` is marked sensitive at the
-schema level regardless. That is why this module's outputs are derived from locals rather
-than read back out of the resources, and why the tests wrap every read in
-`nonsensitive()`. Before removing `sensitive_fields`, confirm what it actually buys on the
-provider version in use — do not remove it on the assumption that it is decorative.
+### Other behaviour
 
-## What is not ported
+- **Karpenter v1 only.** There is no way to render a v1beta1 manifest.
+- **The GPU pool is always created.** It is not gated on any input.
+- **`amiFamily` is never emitted.** The v1 `amiSelectorTerms` alias `al2023@latest`
+  already implies the family.
+- **`upgrade_api_version = true`** on every node class and pool.
+- **Every `NodePool` declares an explicit dependency** on the node class it references, so
+  a fresh apply does not briefly leave a pool pointing at a `nodeClassRef` that does not
+  resolve yet.
+- **`oss-controllers` is applied without `wait` / `wait_for_rollout`,** unlike every other
+  pool, so an apply does not block on it.
 
-Deliberately excluded from the upstream file — this module manages node *shape* only:
+## What this module does not do
 
-- `helm_release.karpenter` and `helm_release.karpenter_crd`
-- The Karpenter controller IRSA role, its policy document, policy and attachment
-- The spot-termination SQS queue and its queue policy
-- The four interruption CloudWatch event rules and their targets
+It manages node *shape* only. Out of scope, on purpose:
+
+- **The Karpenter controller and its CRDs.** No Helm releases are created here.
+- **The controller's IAM.** No IRSA role, policy document, policy or attachment.
+- **Spot-interruption handling.** No SQS queue, no queue policy, and none of the
+  CloudWatch event rules or targets that feed it.
 
 Installing and empowering the Karpenter controller stays with the cluster's owner, who
 already has an opinion about how IAM is managed in their account. Every input those
-resources needed is excluded too, which is what makes the cut clean.
+resources would have needed is absent too, which is what keeps the boundary clean.
 
 Two further things this module does not do:
 
@@ -197,48 +203,6 @@ Two further things this module does not do:
   `nvidia.com/gpu` resource, and nothing schedules on them.
 - **It grants nothing in IAM.** `node_role_name` names a role that must already exist and
   already be mapped in the cluster's auth configuration.
-
-## Provenance and upstream drift
-
-Ported from:
-
-```
-chalk-terraform  infra/aws/terragrunt/chalk-kube/karpenter.tf
-                 @ aa986a8544bd8be391ed81457f95e3cb4775ef82
-```
-
-Nothing in this repository changes when that file changes, so drift is invisible unless
-you go looking. `scripts/check-upstream-drift.sh` goes looking:
-
-```bash
-./scripts/check-upstream-drift.sh                       # $HOME/IdeaProjects/chalk-terraform
-./scripts/check-upstream-drift.sh /path/to/chalk-terraform
-CHALK_TERRAFORM_REPO=/path/to/chalk-terraform ./scripts/check-upstream-drift.sh
-```
-
-It is read-only, runs one `git log`, and exits `0` for no drift, `1` when commits have
-touched the source file, and `2` on a usage or environment error — so it can gate CI.
-
-When drift is reported: review each commit against this module, apply what belongs here,
-then bump `UPSTREAM_SHA` in the script **and** the SHA above.
-
-### Known, intentional differences from the source at that commit
-
-- **Karpenter v1 only.** The source's `karpenter_is_v1` flag and every ternary it fed are
-  collapsed to their v1 branch. There is no way to render a v1beta1 manifest.
-- **The GPU pool is unconditional.** In the source it was gated on `karpenter_is_v1`.
-- **`amiFamily` is never emitted.** The v1 `amiSelectorTerms` alias `al2023@latest`
-  already implies the family.
-- **Subnet selector terms omit `tags: null`.** The source emitted an explicit null
-  alongside each `id`; it serialised to a YAML null that the API server discards.
-- **`oss-controllers` gained a `depends_on` the `al2023` node class.** The source relied
-  on the Helm release alone for ordering, which left this one pool with no dependency on
-  the node class it references.
-- **The source's unused `karpenter_min_instance_generation = 6` local is dropped.** It was
-  dead there and would be dead here.
-- **`oss-controllers` still has no `wait` / `wait_for_rollout`,** unlike every other pool.
-  That asymmetry is inherited from the source and was left alone rather than quietly
-  "fixed".
 
 ## Inputs
 
@@ -249,10 +213,9 @@ then bump `UPSTREAM_SHA` in the script **and** the SHA above.
 | node_role_name | string | `null` → `"<cluster_name>-Managed-Node-Role"` | Bare IAM role **name** (not ARN) for launched nodes |
 | chalk_dataplane_version | string | `null` | Exactly `"CHALK_DATAPLANE_VERSION_V2"` adds the `chalk-nap` pool. Any other value, including `null`, does not |
 
-`chalk_dataplane_version` is an exact string comparison with no validation behind it,
-matching the source. A near-miss value silently produces nine objects instead of ten
-rather than failing — there is a test asserting exactly that, so the behaviour is pinned
-rather than accidental.
+`chalk_dataplane_version` is an exact string comparison with no validation behind it. A
+near-miss value silently produces nine objects instead of ten rather than failing — there
+is a test asserting exactly that, so the behaviour is pinned rather than accidental.
 
 ## Outputs
 
@@ -298,7 +261,3 @@ The whole-manifest pins in `tests/manifests.tftest.hcl` are the ones that matter
 per-field suite passes when a field is *deleted*; a whole-manifest equality assertion does
 not. If a pin fails after a deliberate change, read the diff and update the pin — do not
 weaken the assertion.
-
-The drift script's own behaviour (exit codes, argument handling, error paths) is exercised
-against a `git` shim rather than a real repository, so it can be checked without network
-or repository access.

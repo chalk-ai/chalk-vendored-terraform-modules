@@ -1,25 +1,23 @@
 ################################################################################
 # Karpenter - Chalk standard node classes, node pools and runtime class
 #
-# A direct port of Chalk's own standard Karpenter objects, for EKS clusters that
-# Chalk does NOT manage. On a Chalk-managed cluster these objects are created by
-# Chalk's own pipeline; on a self-managed cluster nothing creates them, and the
+# Creates the standard set of Karpenter objects a Chalk deployment expects --
+# three EC2NodeClass objects, six NodePool objects and one RuntimeClass -- on an
+# EKS cluster that Chalk does NOT manage. On a Chalk-managed cluster these
+# objects already exist; on a self-managed cluster nothing creates them, and the
 # Chalk UI cannot fill the gap -- it creates NodePools only, requires an
 # EC2NodeClass to already exist, and cannot create a RuntimeClass at all.
 #
-# Source: chalk-terraform infra/aws/terragrunt/chalk-kube/karpenter.tf
-#         @ aa986a8544bd8be391ed81457f95e3cb4775ef82
-#
-# Deliberately NOT ported from that file: the Karpenter Helm releases, the
-# controller IRSA role and policy, the spot-termination SQS queue and its policy,
-# and the interruption CloudWatch event rules and targets. This module manages
-# node shape only; installing and empowering the Karpenter controller stays with
-# the cluster's owner.
+# This module manages node *shape* only. It does NOT install the Karpenter
+# controller or its CRDs, does NOT create the controller's IAM role or policy,
+# and does NOT create the spot-interruption queue or the CloudWatch event rules
+# that feed it. All of that must already exist on the cluster: installing and
+# empowering the Karpenter controller stays with the cluster's owner.
 ################################################################################
 
 locals {
   # ---------------------------------------------------------------------------
-  # Values the source hardcodes. These are locals, not variables, on purpose:
+  # Values this module fixes deliberately. These are locals, not variables:
   # this module exists to be opinionated, and every one of these promoted to an
   # input turns it back into a generic node-pool builder. Change one by editing
   # this file, which puts the change through review.
@@ -29,8 +27,8 @@ locals {
   # practice; present so a runaway workload cannot scale a pool without limit.
   max_cpu = 128000
 
-  # The gVisor node class, its compute pool and the RuntimeClass travel together.
-  # Always on in the source, and this module keeps it that way.
+  # The gVisor node class, its compute pool and the RuntimeClass travel together:
+  # each is useless without the other two, so all three are always created.
   create_gvisor_nodeclass = true
 
   # Karpenter v1 sizing. v1 nodes get a larger boot disk than the v1beta1 ones did.
@@ -38,8 +36,9 @@ locals {
   offline_boot_volume_size = "200Gi"
 
   # v1 leaves node draining unbounded unless terminationGracePeriod is set, so it
-  # is always set here. expireAfter and disruption are Karpenter CRD defaults that
-  # the source emits explicitly; see README "Deliberate divergences".
+  # is always set here. expireAfter and the disruption settings match the current
+  # Karpenter CRD defaults but are emitted anyway, so the applied object states
+  # them outright; see README "Behaviour worth knowing".
   node_pool_common = {
     expire_after             = "720h"
     termination_grace_period = "30m"
@@ -49,13 +48,12 @@ locals {
     max_cpu                  = local.max_cpu
   }
 
-  # Chalk's convention on its own clusters, confirmed against a live cluster.
+  # The node role naming convention Chalk-managed clusters follow. Override
+  # var.node_role_name when the cluster's role was created outside it.
   node_role_name = coalesce(var.node_role_name, "${var.cluster_name}-Managed-Node-Role")
 
-  # A plain list of subnet IDs, one selector term each -- exactly as the source
-  # renders it. The source also emitted `tags = null` alongside each `id`; that
-  # serialised to an explicit YAML null, which the API server discards, so it is
-  # simply omitted here.
+  # A plain list of subnet IDs, one selector term each. Selecting subnets by tag
+  # is not part of Chalk's standard shape, so no other term shape is rendered.
   subnet_selector_terms = [for net in var.subnets : { id = net }]
 
   # ---------------------------------------------------------------------------
@@ -263,9 +261,9 @@ resource "kubectl_manifest" "oss_controllers_node_pool" {
   # provider default of redacting "spec".
   sensitive_fields = []
 
-  # Not in the source, which relied on the Helm release alone for ordering. A
-  # NodePool whose nodeClassRef does not resolve yet goes Ready=False rather than
-  # failing, so the omission was survivable -- but it is still an ordering bug.
+  # A NodePool whose nodeClassRef does not resolve yet goes Ready=False rather
+  # than failing, so this ordering is not enforced by Karpenter itself. It is
+  # declared here so a fresh apply never leaves this pool briefly unusable.
   depends_on = [
     kubectl_manifest.al2023_node_class
   ]

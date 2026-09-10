@@ -1,10 +1,8 @@
 # Per-object characterization tests. Each run pins one object's FULL decoded manifest.
 #
-# These are the tests that make this module a faithful port. The source it was ported
-# from is chalk-terraform infra/aws/terragrunt/chalk-kube/karpenter.tf @ aa986a85, and a
-# whole-manifest equality assertion is the only kind that catches an accidental edit to
-# a label, a taint, a requirement value or a boot volume size -- a per-field assertion
-# suite quietly passes when a field is DELETED.
+# A whole-manifest equality assertion is the only kind that catches an accidental edit
+# to a label, a taint, a requirement value or a boot volume size -- a per-field
+# assertion suite quietly passes when a field is DELETED.
 #
 # `mock_provider "kubectl" {}` configures no provider and reaches no cluster, so this
 # suite needs no kubeconfig and no credentials.
@@ -71,7 +69,7 @@ run "ec2nodeclass_al2023" {
         }
       }
     }
-    error_message = "the rendered manifest for ec2nodeclass_al2023 no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for ec2nodeclass_al2023 no longer matches its pinned manifest"
   }
 }
 
@@ -128,7 +126,7 @@ run "ec2nodeclass_al2023_offline_lssd" {
         }
       }
     }
-    error_message = "the rendered manifest for ec2nodeclass_al2023_offline_lssd no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for ec2nodeclass_al2023_offline_lssd no longer matches its pinned manifest"
   }
 }
 
@@ -219,7 +217,7 @@ run "ec2nodeclass_gvisor" {
         EOT
       }
     }
-    error_message = "the rendered manifest for ec2nodeclass_gvisor no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for ec2nodeclass_gvisor no longer matches its pinned manifest"
   }
 }
 
@@ -272,7 +270,7 @@ run "nodepool_oss_controllers" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_oss_controllers no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_oss_controllers no longer matches its pinned manifest"
   }
 }
 
@@ -362,7 +360,7 @@ run "nodepool_chalk_infrastructure" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_chalk_infrastructure no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_chalk_infrastructure no longer matches its pinned manifest"
   }
 }
 
@@ -452,7 +450,7 @@ run "nodepool_chalk_online" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_chalk_online no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_chalk_online no longer matches its pinned manifest"
   }
 }
 
@@ -547,7 +545,7 @@ run "nodepool_chalk_offline" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_chalk_offline no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_chalk_offline no longer matches its pinned manifest"
   }
 }
 
@@ -638,7 +636,7 @@ run "nodepool_chalk_nap" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_chalk_nap no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_chalk_nap no longer matches its pinned manifest"
   }
 }
 
@@ -735,14 +733,14 @@ run "nodepool_chalk_compute" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_chalk_compute no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_chalk_compute no longer matches its pinned manifest"
   }
 }
 
 run "nodepool_chalk_compute_gpu" {
   command = plan
 
-  # Always created. The source gated this pool on its karpenter_is_v1 flag; this module is v1-only, so the guard is gone.
+  # Always created; the GPU pool is not gated on anything.
 
   assert {
     condition = yamldecode(nonsensitive(kubectl_manifest.chalk_compute_gpu_node_pool.yaml_body)) == {
@@ -837,7 +835,7 @@ run "nodepool_chalk_compute_gpu" {
         weight = 10
       }
     }
-    error_message = "the rendered manifest for nodepool_chalk_compute_gpu no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for nodepool_chalk_compute_gpu no longer matches its pinned manifest"
   }
 }
 
@@ -881,7 +879,7 @@ run "runtimeclass_gvisor" {
         ]
       }
     }
-    error_message = "the rendered manifest for runtimeclass_gvisor no longer matches the pinned port of the source"
+    error_message = "the rendered manifest for runtimeclass_gvisor no longer matches its pinned manifest"
   }
 }
 

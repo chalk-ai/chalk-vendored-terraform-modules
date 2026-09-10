@@ -209,7 +209,7 @@ run "gpu_pool_requires_nvidia" {
 run "every_pool_is_on_demand_only" {
   command = plan
 
-  # No spot anywhere. The source hardcoded this and never exposed it.
+  # No spot anywhere. Every pool is on-demand only, and that is not configurable.
   assert {
     condition = alltrue([
       for body in concat(

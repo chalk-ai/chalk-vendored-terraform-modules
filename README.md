@@ -64,12 +64,11 @@ See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valk
 
 Chalk's **standard** Karpenter node resources for an EKS cluster that Chalk does not
 manage: three `EC2NodeClass` objects, six `NodePool` objects and one `RuntimeClass`, from
-one module. A direct port of the objects Chalk's own pipeline creates -- pool names,
-labels, taints, requirements and limits are all fixed.
+one module. Pool names, labels, taints, requirements and limits are all fixed.
 
-**Which karpenter module should I use?** Use `chalk-standard` if you want Chalk's standard
-node set on a cluster Chalk does not manage; use the generic `ec2nodeclass` and `nodepool`
-building blocks only if you need node pools that are *not* Chalk's standard set.
+Use it when you want Chalk's standard node set on a cluster Chalk does not manage. It is
+deliberately not a generic node-pool builder: if you need node pools that are *not*
+Chalk's standard set, declare them yourself against the Karpenter CRDs.
 
 **Features**:
 - All ten standard objects from one module -- no nested modules

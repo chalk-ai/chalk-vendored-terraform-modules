@@ -1,7 +1,6 @@
-# This module is Karpenter v1 only. The source it was ported from carried a
-# karpenter_is_v1 flag and a ternary on every schema difference; all of that collapsed,
-# which means a v1beta1 fragment surviving anywhere is a porting mistake rather than a
-# supported configuration.
+# This module is Karpenter v1 only. There is no way to render a v1beta1 manifest, so a
+# v1beta1 fragment surviving anywhere is a mistake rather than a configuration this
+# module allows.
 #
 # Every run here sweeps ALL rendered manifests, with chalk_dataplane_version set to v2 so
 # that chalk-nap is in the sweep too.
