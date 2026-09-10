@@ -1,4 +1,4 @@
-# Karpenter Chalk Standard Module
+# Karpenter Chalk Standard NodePools Module
 
 Terraform module that creates Chalk's **standard** set of Karpenter node resources — three
 `EC2NodeClass` objects, six `NodePool` objects and one `RuntimeClass` — on an EKS cluster
@@ -54,7 +54,7 @@ none of it is created or verified here:
 
 ```hcl
 module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard-nodepools?ref=v0.3.0"
 
   cluster_name = "example-cluster"
   subnets      = ["subnet-xxxxx", "subnet-yyyyy", "subnet-zzzzz"]
@@ -77,7 +77,7 @@ provider "kubectl" {
 
 ```hcl
 module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard-nodepools?ref=v0.3.0"
 
   cluster_name   = "example-cluster"
   subnets        = ["subnet-xxxxx", "subnet-yyyyy"]

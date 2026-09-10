@@ -60,7 +60,7 @@ See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valk
 
 ### AWS Karpenter Modules
 
-#### Chalk Standard Karpenter Set (`modules/aws/karpenter/chalk-standard`)
+#### Chalk Standard Karpenter NodePools (`modules/aws/karpenter/chalk-standard-nodepools`)
 
 Chalk's **standard** Karpenter node resources for an EKS cluster that Chalk does not
 manage: three `EC2NodeClass` objects, six `NodePool` objects and one `RuntimeClass`, from
@@ -83,7 +83,7 @@ the Helm releases, controller IAM and interruption queue are deliberately out of
 - `node_pool_names`: names of every NodePool created
 - `node_role_name`: the IAM role name assigned to launched nodes
 
-See [`modules/aws/karpenter/chalk-standard/README.md`](modules/aws/karpenter/chalk-standard/README.md).
+See [`modules/aws/karpenter/chalk-standard-nodepools/README.md`](modules/aws/karpenter/chalk-standard-nodepools/README.md).
 
 ## Usage
 
@@ -101,7 +101,7 @@ module "chalk_management_role" {
 
 ```hcl
 module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard-nodepools?ref=v0.3.0"
 
   cluster_name = "example-cluster"
   subnets      = ["subnet-xxxxx", "subnet-yyyyy", "subnet-zzzzz"]
