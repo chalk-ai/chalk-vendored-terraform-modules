@@ -1,0 +1,72 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: gvisor
+spec:
+  amiSelectorTerms:
+    - alias: al2023@latest
+  role: ${jsonencode(role)}
+  subnetSelectorTerms:
+%{ for subnet in subnets ~}
+    - id: ${jsonencode(subnet)}
+%{ endfor ~}
+  securityGroupSelectorTerms:
+    - tags:
+        "karpenter.sh/discovery": ${jsonencode(cluster_name)}
+    - tags:
+        "aws:eks:cluster-name": ${jsonencode(cluster_name)}
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        deleteOnTermination: true
+        volumeSize: ${jsonencode(volume_size)}
+        volumeType: gp3
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required
+  tags:
+    "karpenter.sh/discovery": ${jsonencode(cluster_name)}
+  userData: |
+    MIME-Version: 1.0
+    Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+    --BOUNDARY
+    Content-Type: application/node.eks.aws
+
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      kubelet:
+        config:
+          registryPullQPS: 0
+
+    --BOUNDARY
+    Content-Type: text/x-shellscript; charset="us-ascii"
+
+    #!/bin/bash
+    set -e
+
+    # Install gVisor
+    ARCH=$(uname -m)
+    URL="https://storage.googleapis.com/gvisor/releases/release/latest/$${ARCH}"
+    curl -fsSL "$${URL}/runsc" -o /usr/local/bin/runsc
+    curl -fsSL "$${URL}/containerd-shim-runsc-v1" -o /usr/local/bin/containerd-shim-runsc-v1
+    chmod +x /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1
+
+    # Wait for nodeadm to configure containerd
+    while [ ! -f /etc/containerd/config.toml ] || ! grep -q "io.containerd.cri.v1.runtime" /etc/containerd/config.toml; do
+      sleep 1
+    done
+
+    # Add gVisor runtime (AL2023 containerd 2.x format)
+    cat >> /etc/containerd/config.toml <<'CONTAINERD_EOF'
+
+    [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]
+    runtime_type = "io.containerd.runsc.v1"
+    CONTAINERD_EOF
+
+    systemctl restart containerd
+
+    --BOUNDARY--

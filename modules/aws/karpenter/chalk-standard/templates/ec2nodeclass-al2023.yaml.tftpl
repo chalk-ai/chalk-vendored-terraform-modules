@@ -1,0 +1,40 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: ${jsonencode(name)}
+spec:
+  amiSelectorTerms:
+    - alias: al2023@latest
+  role: ${jsonencode(role)}
+  subnetSelectorTerms:
+%{ for subnet in subnets ~}
+    - id: ${jsonencode(subnet)}
+%{ endfor ~}
+  securityGroupSelectorTerms:
+    - tags:
+        "karpenter.sh/discovery": ${jsonencode(cluster_name)}
+    - tags:
+        "aws:eks:cluster-name": ${jsonencode(cluster_name)}
+%{ if instance_store_policy != null ~}
+  instanceStorePolicy: ${jsonencode(instance_store_policy)}
+%{ endif ~}
+  userData: |
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      kubelet:
+        config:
+          registryPullQPS: 0
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeType: gp3
+        volumeSize: ${jsonencode(volume_size)}
+        deleteOnTermination: true
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required
+  tags:
+    "karpenter.sh/discovery": ${jsonencode(cluster_name)}

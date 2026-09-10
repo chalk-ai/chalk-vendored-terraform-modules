@@ -1,0 +1,47 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: ${jsonencode(name)}
+  labels:
+%{ for label_key, label_value in labels ~}
+    ${jsonencode(label_key)}: ${jsonencode(label_value)}
+%{ endfor ~}
+spec:
+  template:
+%{ if length(node_labels) > 0 ~}
+    metadata:
+      labels:
+%{ for label_key, label_value in node_labels ~}
+        ${jsonencode(label_key)}: ${jsonencode(label_value)}
+%{ endfor ~}
+%{ endif ~}
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: ${jsonencode(node_class_name)}
+      expireAfter: ${jsonencode(expire_after)}
+      terminationGracePeriod: ${jsonencode(termination_grace_period)}
+      requirements:
+%{ for requirement in requirements ~}
+        - key: ${jsonencode(requirement.key)}
+          operator: ${jsonencode(requirement.operator)}
+          values:
+%{ for requirement_value in requirement.values ~}
+            - ${jsonencode(requirement_value)}
+%{ endfor ~}
+%{ endfor ~}
+%{ if length(taints) > 0 ~}
+      taints:
+%{ for taint in taints ~}
+        - key: ${jsonencode(taint.key)}
+          value: ${jsonencode(taint.value)}
+          effect: ${jsonencode(taint.effect)}
+%{ endfor ~}
+%{ endif ~}
+  limits:
+    cpu: ${jsonencode(max_cpu)}
+  disruption:
+    consolidationPolicy: ${jsonencode(consolidation_policy)}
+    consolidateAfter: ${jsonencode(consolidate_after)}
+  weight: ${jsonencode(weight)}
