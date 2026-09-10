@@ -17,7 +17,6 @@ two required inputs, and everything else is fixed.
   vCPU limits are all fixed at Chalk's standard values.
 - Manifests are rendered from YAML template files, so the object that will be applied is
   readable as YAML in the repository rather than assembled by `yamlencode`.
-- Characterization tests pin every one of the ten manifests in full.
 
 ## Why you need this on a cluster Chalk does not manage
 
@@ -140,9 +139,9 @@ non-sensitive, because `yaml_body` is marked sensitive at the schema level regar
 does not actually make the spec diff visible in a plan.
 
 That is also why this module's outputs are derived from locals rather than read back out of
-the resources, and why the tests wrap every read in `nonsensitive()`. Before removing
-`sensitive_fields`, confirm what it buys on the provider version in use — do not remove it
-on the assumption that it is decorative.
+the resources: an output reading `yaml_body` would itself have to be `sensitive`. Before
+removing `sensitive_fields`, confirm what it buys on the provider version in use — do not
+remove it on the assumption that it is decorative.
 
 ### Other behaviour
 
@@ -206,28 +205,3 @@ goes through review rather than through a caller's `.tfvars`.
 These are derived from `local`s, not read back from `kubectl_manifest` attributes, because
 `yaml_body` is sensitive at the schema level and any output reading it would have to be
 `sensitive = true`.
-
-## Tests
-
-```bash
-tofu init
-tofu test
-tofu fmt -check -recursive
-```
-
-`mock_provider "kubectl" {}` configures no provider and reaches no cluster, so the suite
-needs no kubeconfig and no credentials.
-
-| File | Covers |
-|------|--------|
-| `tests/manifests.tftest.hcl` | Every one of the ten objects, each with its **full** decoded manifest pinned |
-| `tests/subnets.tftest.hcl` | Single and multiple subnets, order, and that all three node classes select the same set |
-| `tests/v1_only.tftest.hcl` | No `v1beta1` anywhere, no `amiFamily`, every `nodeClassRef` carries group + kind + name |
-| `tests/requirements.tftest.hcl` | The workload / offline / compute / GPU requirement lists, field by field |
-| `tests/node_role.tftest.hcl` | That the derived role name reaches every node class |
-| `tests/validation.tftest.hcl` | Each input validation, one violation per run |
-
-The whole-manifest pins in `tests/manifests.tftest.hcl` are the ones that matter. A
-per-field suite passes when a field is *deleted*; a whole-manifest equality assertion does
-not. If a pin fails after a deliberate change, read the diff and update the pin — do not
-weaken the assertion.
