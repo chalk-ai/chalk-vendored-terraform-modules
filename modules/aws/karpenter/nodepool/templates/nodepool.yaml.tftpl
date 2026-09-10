@@ -6,7 +6,8 @@
 #   - Every scalar except `weight` and `minValues` is emitted through jsonencode. A JSON string is a
 #     valid YAML flow scalar, so quantities like 1k, percentages like 10% and durations like 0s stay
 #     strings instead of being coerced by the YAML parser, and any caller value is escaped correctly.
-#   - Nothing Karpenter already defaults is emitted unless the caller set it -- see RFC section 5.4.
+#   - Nothing Karpenter already defaults is emitted unless the caller set it, so the applied object
+#     stays as small as the caller's intent.
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:

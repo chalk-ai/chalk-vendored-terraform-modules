@@ -1,10 +1,5 @@
 # Characterization fixture A: a NodePool pinning a machine family.
-# Anonymised; server metadata and status stripped.
-#
-# NOTE: the live object carried the label key `chalk-ai/resource-group` (hyphen).
-# That matches nothing in the Chalk codebase — the canonical key is
-# `chalk.ai/resource-group` — so this fixture uses the canonical form. The
-# divergence is tracked as an open question on INF-2110.
+# Server-assigned metadata and status are stripped, and identifiers are placeholders.
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:

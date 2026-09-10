@@ -1,10 +1,10 @@
 # Inputs for one Karpenter v1 NodePool.
 #
-# Validation policy (RFC INF-2110 section 8.1): every rule below is ALSO enforced server-side by the
-# Karpenter CRD. The module restates the cheap, stable, documented kubebuilder markers so a caller
-# gets plan-time feedback instead of a mid-apply API rejection, and cites the marker beside each one
-# so a future reader can re-sync against upstream rather than guess. Anything Karpenter might
-# reasonably loosen later is deliberately left unvalidated and forwarded to the API server.
+# Validation policy: every rule below is ALSO enforced server-side by the Karpenter CRD. The module
+# restates the cheap, stable, documented kubebuilder markers so a caller gets plan-time feedback
+# instead of a mid-apply API rejection, and cites the marker beside each one so a future reader can
+# re-sync against the CRD rather than guess. Anything Karpenter might reasonably loosen later is
+# deliberately left unvalidated and forwarded to the API server.
 #
 # Null policy: EVERY optional input defaults to null, including the collections. An empty list or map
 # is indistinguishable from "the caller set nothing", and this module needs that distinction to

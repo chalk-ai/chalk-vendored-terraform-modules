@@ -3,8 +3,8 @@
 # The two duration inputs look interchangeable and are not: expire_after accepts the literal Never,
 # termination_grace_period does not. That asymmetry is in the CRD patterns and is pinned below.
 #
-# These are scalars, so per RFC section 8.2 "multi" means a run per representative value across the
-# domain with the boundaries included, and there is no mixed case to write.
+# These are scalars, so "multi" means a run per representative value across the domain with the
+# boundaries included, and there is no mixed good/bad case to write.
 
 mock_provider "kubectl" {}
 

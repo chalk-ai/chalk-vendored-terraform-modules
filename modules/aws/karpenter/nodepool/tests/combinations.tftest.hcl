@@ -1,5 +1,5 @@
-# RFC section 8.4 -- rules that span attributes and are therefore invisible to the single-property
-# matrices. Each row of that table gets its own run here.
+# Rules that span two or more attributes, and are therefore invisible to the single-property
+# matrices in the other test files. Each such rule gets its own run here.
 #
 # The requirements-plus-labels cap is the one rule that cannot live in a `validation` block at all: a
 # validation may only reference its own variable, and this rule spans two. It is a `precondition` on
