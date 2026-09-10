@@ -60,7 +60,7 @@ See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valk
 
 ### AWS Karpenter Modules
 
-#### Chalk Standard Karpenter NodePools (`modules/aws/karpenter/chalk-standard-nodepools`)
+#### Chalk Standard Karpenter Set (`modules/aws/karpenter/chalk-standard`)
 
 Chalk's **standard** Karpenter node resources for an EKS cluster that Chalk does not
 manage: three `EC2NodeClass` objects, six `NodePool` objects and one `RuntimeClass`, from
@@ -73,7 +73,8 @@ Chalk's standard set, declare them yourself against the Karpenter CRDs.
 **Features**:
 - All ten standard objects from one module -- no nested modules
 - Karpenter **v1** schemas only (`karpenter.sh/v1`, `karpenter.k8s.aws/v1`)
-- Exactly two inputs, both required: `subnets` and `cluster_name`
+- Two required inputs: `subnets` and `cluster_name`
+- Optional `chalk-nap` fallback pool for dataplane-v2 clusters
 - Creates the `EC2NodeClass` and `RuntimeClass` objects the Chalk UI cannot create at all
 
 **Requires** the `alekc/kubectl` provider `~> 2.3`, and a working Karpenter controller --
@@ -83,7 +84,7 @@ the Helm releases, controller IAM and interruption queue are deliberately out of
 - `node_pool_names`: names of every NodePool created
 - `node_role_name`: the IAM role name assigned to launched nodes
 
-See [`modules/aws/karpenter/chalk-standard-nodepools/README.md`](modules/aws/karpenter/chalk-standard-nodepools/README.md).
+See [`modules/aws/karpenter/chalk-standard/README.md`](modules/aws/karpenter/chalk-standard/README.md).
 
 ## Usage
 
@@ -101,10 +102,13 @@ module "chalk_management_role" {
 
 ```hcl
 module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard-nodepools?ref=v0.3.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
 
   cluster_name = "example-cluster"
   subnets      = ["subnet-xxxxx", "subnet-yyyyy", "subnet-zzzzz"]
+
+  # Only on dataplane-v2 clusters; adds the untainted chalk-nap fallback pool.
+  # chalk_dataplane_version = "CHALK_DATAPLANE_VERSION_V2"
 }
 
 output "karpenter_node_pools" {

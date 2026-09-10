@@ -48,10 +48,9 @@ locals {
     max_cpu                  = local.max_cpu
   }
 
-  # The node role every launched node assumes. Its name follows the convention
-  # Chalk clusters use, derived from the cluster name; the role itself must
-  # already exist, and this module neither creates nor grants anything in IAM.
-  node_role_name = "${var.cluster_name}-Managed-Node-Role"
+  # The node role naming convention Chalk-managed clusters follow. Override
+  # var.node_role_name when the cluster's role was created outside it.
+  node_role_name = coalesce(var.node_role_name, "${var.cluster_name}-Managed-Node-Role")
 
   # A plain list of subnet IDs, one selector term each. Selecting subnets by tag
   # is not part of Chalk's standard shape, so no other term shape is rendered.
@@ -113,21 +112,38 @@ locals {
 
   internal_node_pools = {
     chalk-infrastructure = {
-      node_class_name = "al2023"
-      workload_type   = "infrastructure"
-      requirements    = local.chalk_workload_requirements
+      node_class_name     = "al2023"
+      workload_type       = "infrastructure"
+      requirements        = local.chalk_workload_requirements
+      taint_workload_type = true
     }
     chalk-online = {
-      node_class_name = "al2023"
-      workload_type   = "online"
-      requirements    = local.chalk_workload_requirements
+      node_class_name     = "al2023"
+      workload_type       = "online"
+      requirements        = local.chalk_workload_requirements
+      taint_workload_type = true
     }
     chalk-offline = {
-      node_class_name = "al2023-offline-lssd"
-      workload_type   = "offline"
-      requirements    = local.chalk_offline_requirements
+      node_class_name     = "al2023-offline-lssd"
+      workload_type       = "offline"
+      requirements        = local.chalk_offline_requirements
+      taint_workload_type = true
     }
   }
+
+  # Dataplane v2 gets an online-compatible fallback pool for Chalk-managed
+  # workloads that do not carry a workload-type toleration. Note it is NOT tainted
+  # with chalk.ai/workload-type -- that is the whole point of it.
+  dataplane_v2_node_pools = var.chalk_dataplane_version == "CHALK_DATAPLANE_VERSION_V2" ? {
+    chalk-nap = {
+      node_class_name     = "al2023"
+      workload_type       = "online"
+      requirements        = local.chalk_workload_requirements
+      taint_workload_type = false
+    }
+  } : {}
+
+  all_internal_node_pools = merge(local.internal_node_pools, local.dataplane_v2_node_pools)
 }
 
 ################################################################################
@@ -256,13 +272,13 @@ resource "kubectl_manifest" "oss_controllers_node_pool" {
 ################################################################################
 # NodePools - Chalk Internal Workloads
 #
-# chalk-infrastructure / chalk-online / chalk-offline. Each carries a
-# chalk.ai/workload-type taint naming its own tier, in addition to the
-# chalk.ai/managed-by taint every pool in this module carries.
+# chalk-infrastructure / chalk-online / chalk-offline, plus chalk-nap on
+# dataplane v2. All but chalk-nap carry a chalk.ai/workload-type taint in addition
+# to the chalk.ai/managed-by taint every pool here carries.
 ################################################################################
 
 resource "kubectl_manifest" "internal_node_pools" {
-  for_each = local.internal_node_pools
+  for_each = local.all_internal_node_pools
 
   timeouts {
     delete = "45m"
@@ -281,13 +297,13 @@ resource "kubectl_manifest" "internal_node_pools" {
     node_class_name = each.value.node_class_name
     requirements    = each.value.requirements
     taints = concat(
-      [
+      each.value.taint_workload_type ? [
         {
           key    = "chalk.ai/workload-type"
           value  = each.value.workload_type
           effect = "NoSchedule"
         }
-      ],
+      ] : [],
       [
         {
           key    = "chalk.ai/managed-by"
