@@ -64,18 +64,3 @@ variable "node_role_name" {
     error_message = "node_role_name must not be blank. Leave it unset to derive \"<cluster_name>-Managed-Node-Role\" instead."
   }
 }
-
-variable "chalk_dataplane_version" {
-  description = <<-EOT
-    Chalk dataplane version of the target cluster. When -- and only when -- this is
-    exactly `"CHALK_DATAPLANE_VERSION_V2"`, an extra `chalk-nap` NodePool is created:
-    an online-compatible fallback pool for Chalk-managed workloads that do not carry a
-    `chalk.ai/workload-type` toleration.
-
-    Any other value, including `null`, leaves `chalk-nap` uncreated. The comparison is
-    an exact string match, so a misspelling silently produces nine objects instead of
-    ten.
-  EOT
-  type        = string
-  default     = null
-}

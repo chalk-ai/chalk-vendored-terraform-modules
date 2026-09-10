@@ -15,10 +15,8 @@ two required inputs, and everything else is fixed.
   the cluster name and is the only other thing a caller normally touches.
 - Pool names, labels, taints, requirements, boot volume sizes, disruption policy and
   vCPU limits are all fixed at Chalk's standard values.
-- Optional `chalk-nap` fallback pool for dataplane-v2 clusters, behind one input.
 - Manifests are rendered from YAML template files, so the object that will be applied is
   readable as YAML in the repository rather than assembled by `yamlencode`.
-- Characterization tests pin every one of the ten manifests in full.
 
 ## Why you need this on a cluster Chalk does not manage
 
@@ -75,18 +73,6 @@ provider "kubectl" {
 }
 ```
 
-### Dataplane v2
-
-```hcl
-module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
-
-  cluster_name            = "example-cluster"
-  subnets                 = ["subnet-xxxxx", "subnet-yyyyy"]
-  chalk_dataplane_version = "CHALK_DATAPLANE_VERSION_V2"
-}
-```
-
 ### Cluster whose node role does not follow the Chalk convention
 
 ```hcl
@@ -110,7 +96,6 @@ module "chalk_karpenter" {
 | `NodePool` | `chalk-infrastructure` | Tainted `chalk.ai/workload-type=infrastructure` |
 | `NodePool` | `chalk-online` | Tainted `chalk.ai/workload-type=online` |
 | `NodePool` | `chalk-offline` | Tainted `chalk.ai/workload-type=offline`, requires local NVMe |
-| `NodePool` | `chalk-nap` | **Dataplane v2 only.** Same capacity as `chalk-online` but with *no* workload-type taint |
 | `NodePool` | `chalk-compute` | gVisor sandboxed compute, triple-tainted |
 | `NodePool` | `chalk-compute-gpu` | NVIDIA g/p families, tainted `nvidia.com/gpu=true` |
 | `RuntimeClass` | `gvisor` | `handler: runsc`, with the node selector and three tolerations that place a pod on `chalk-compute` |
@@ -166,9 +151,9 @@ non-sensitive, because `yaml_body` is marked sensitive at the schema level regar
 does not actually make the spec diff visible in a plan.
 
 That is also why this module's outputs are derived from locals rather than read back out of
-the resources, and why the tests wrap every read in `nonsensitive()`. Before removing
-`sensitive_fields`, confirm what it buys on the provider version in use — do not remove it
-on the assumption that it is decorative.
+the resources: an output reading `yaml_body` would itself have to be `sensitive`. Before
+removing `sensitive_fields`, confirm what it buys on the provider version in use — do not
+remove it on the assumption that it is decorative.
 
 ### Other behaviour
 
@@ -211,11 +196,11 @@ Two further things this module does not do:
 | subnets | list(string) | _required_ | Subnet IDs Karpenter may launch nodes into. One `{ id = <subnet> }` selector term per element. Must be non-empty |
 | cluster_name | string | _required_ | EKS cluster name. Keys both `securityGroupSelectorTerms` tag terms, the node class `tags`, and the default node role name. Must be non-empty |
 | node_role_name | string | `null` → `"<cluster_name>-Managed-Node-Role"` | Bare IAM role **name** (not ARN) for launched nodes |
-| chalk_dataplane_version | string | `null` | Exactly `"CHALK_DATAPLANE_VERSION_V2"` adds the `chalk-nap` pool. Any other value, including `null`, does not |
 
-`chalk_dataplane_version` is an exact string comparison with no validation behind it. A
-near-miss value silently produces nine objects instead of ten rather than failing — there
-is a test asserting exactly that, so the behaviour is pinned rather than accidental.
+`subnets`, `cluster_name` and `node_role_name` are the entire input surface. Everything
+else — pool names, labels, taints, requirements, volume sizes, the vCPU ceiling — is a
+`local` in `main.tf`, so changing one goes through review rather than through a caller's
+`.tfvars`.
 
 ## Outputs
 
@@ -223,9 +208,8 @@ is a test asserting exactly that, so the behaviour is pinned rather than acciden
 |------|-------------|
 | node_role_name | The role name actually used — the input, or the derived default |
 | ec2_node_class_names | Names of the EC2NodeClass objects created |
-| node_pool_names | Names of every NodePool created, sorted. Includes `chalk-nap` only on dataplane v2 |
+| node_pool_names | Names of every NodePool created, sorted |
 | runtime_class_name | Name of the gVisor RuntimeClass, or `null` if the gVisor objects are off |
-| chalk_nap_enabled | Whether the dataplane-v2 fallback pool was created |
 | subnet_selector_terms | The selector terms rendered into every EC2NodeClass |
 | max_cpu | Aggregate vCPU limit applied to every Chalk NodePool |
 | boot_volume_size | Boot volume size on the `al2023` and `gvisor` node classes |
@@ -235,29 +219,3 @@ is a test asserting exactly that, so the behaviour is pinned rather than acciden
 These are derived from `local`s, not read back from `kubectl_manifest` attributes, because
 `yaml_body` is sensitive at the schema level and any output reading it would have to be
 `sensitive = true`.
-
-## Tests
-
-```bash
-tofu init
-tofu test
-tofu fmt -check -recursive
-```
-
-`mock_provider "kubectl" {}` configures no provider and reaches no cluster, so the suite
-needs no kubeconfig and no credentials.
-
-| File | Covers |
-|------|--------|
-| `tests/manifests.tftest.hcl` | Every one of the ten objects, each with its **full** decoded manifest pinned |
-| `tests/subnets.tftest.hcl` | Single and multiple subnets, order, and that all three node classes select the same set |
-| `tests/dataplane.tftest.hcl` | The `chalk-nap` gate, including that enabling it changes nothing else |
-| `tests/v1_only.tftest.hcl` | No `v1beta1` anywhere, no `amiFamily`, every `nodeClassRef` carries group + kind + name |
-| `tests/requirements.tftest.hcl` | The workload / offline / compute / GPU requirement lists, field by field |
-| `tests/node_role.tftest.hcl` | The derived default and an explicit override |
-| `tests/validation.tftest.hcl` | Each input validation, one violation per run |
-
-The whole-manifest pins in `tests/manifests.tftest.hcl` are the ones that matter. A
-per-field suite passes when a field is *deleted*; a whole-manifest equality assertion does
-not. If a pin fails after a deliberate change, read the diff and update the pin — do not
-weaken the assertion.

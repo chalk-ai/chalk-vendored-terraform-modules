@@ -16,10 +16,10 @@ output "ec2_node_class_names" {
 }
 
 output "node_pool_names" {
-  description = "Names of every NodePool this module creates. Contains chalk-nap only when chalk_dataplane_version is CHALK_DATAPLANE_VERSION_V2."
+  description = "Names of every NodePool this module creates."
   value = sort(concat(
     ["oss-controllers", "chalk-compute-gpu"],
-    keys(local.all_internal_node_pools),
+    keys(local.internal_node_pools),
     local.create_gvisor_nodeclass ? ["chalk-compute"] : [],
   ))
 }
@@ -27,11 +27,6 @@ output "node_pool_names" {
 output "runtime_class_name" {
   description = "Name of the gVisor RuntimeClass, or null when the gVisor objects are not created."
   value       = local.create_gvisor_nodeclass ? "gvisor" : null
-}
-
-output "chalk_nap_enabled" {
-  description = "Whether the dataplane-v2 chalk-nap fallback NodePool was created."
-  value       = contains(keys(local.all_internal_node_pools), "chalk-nap")
 }
 
 output "subnet_selector_terms" {
