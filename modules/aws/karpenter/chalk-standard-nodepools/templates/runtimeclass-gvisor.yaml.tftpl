@@ -1,0 +1,22 @@
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    "chalk.ai/container-runtime": gvisor
+    "chalk.ai/workload-type": compute
+  tolerations:
+    - key: "chalk.ai/container-runtime"
+      operator: Equal
+      value: gvisor
+      effect: NoSchedule
+    - key: "chalk.ai/workload-type"
+      operator: Equal
+      value: compute
+      effect: NoSchedule
+    - key: "chalk.ai/managed-by"
+      operator: Equal
+      value: chalk
+      effect: NoSchedule
