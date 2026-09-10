@@ -18,7 +18,7 @@ output "ec2_node_class_names" {
 output "node_pool_names" {
   description = "Names of every NodePool this module creates."
   value = sort(concat(
-    ["oss-controllers", "chalk-compute-gpu"],
+    ["chalk-compute-gpu"],
     keys(local.internal_node_pools),
     local.create_gvisor_nodeclass ? ["chalk-compute"] : [],
   ))
@@ -35,7 +35,7 @@ output "subnet_selector_terms" {
 }
 
 output "max_cpu" {
-  description = "Aggregate vCPU limit applied to every Chalk NodePool. oss-controllers is the one pool that does not use it."
+  description = "Aggregate vCPU limit applied to every NodePool this module creates."
   value       = local.max_cpu
 }
 

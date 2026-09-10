@@ -204,55 +204,6 @@ resource "kubectl_manifest" "gvisor_node_class" {
 }
 
 ################################################################################
-# NodePool - OSS Controllers
-#
-# Small, untainted pool that open-source controllers land on. Its 6 vCPU limit is
-# the one place this module does not use local.max_cpu.
-################################################################################
-
-resource "kubectl_manifest" "oss_controllers_node_pool" {
-  timeouts {
-    delete = "45m"
-  }
-
-  yaml_body = templatefile("${path.module}/templates/nodepool.yaml.tftpl", merge(local.node_pool_common, {
-    name = "oss-controllers"
-    labels = {
-      "chalk.ai/visibility" = "internal"
-    }
-    node_labels     = {}
-    node_class_name = "al2023"
-    requirements = [
-      {
-        key      = "node.kubernetes.io/instance-type"
-        operator = "In"
-        values   = ["t3.medium"]
-      },
-      {
-        key      = "karpenter.sh/capacity-type"
-        operator = "In"
-        values   = ["on-demand"]
-      }
-    ]
-    taints  = []
-    max_cpu = 6
-  }))
-
-  upgrade_api_version = true
-
-  # NodePool specs carry no secrets; show the full diff in plans rather than the
-  # provider default of redacting "spec".
-  sensitive_fields = []
-
-  # A NodePool whose nodeClassRef does not resolve yet goes Ready=False rather
-  # than failing, so this ordering is not enforced by Karpenter itself. It is
-  # declared here so a fresh apply never leaves this pool briefly unusable.
-  depends_on = [
-    kubectl_manifest.al2023_node_class
-  ]
-}
-
-################################################################################
 # NodePools - Chalk Internal Workloads
 #
 # chalk-infrastructure / chalk-online / chalk-offline. Each carries a

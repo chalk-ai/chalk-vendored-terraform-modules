@@ -1,7 +1,7 @@
 # Karpenter Chalk Standard NodePools Module
 
 Terraform module that creates Chalk's **standard** set of Karpenter node resources — three
-`EC2NodeClass` objects, six `NodePool` objects and one `RuntimeClass` — on an EKS cluster
+`EC2NodeClass` objects, five `NodePool` objects and one `RuntimeClass` — on an EKS cluster
 that Chalk does **not** manage.
 
 It creates one fixed, opinionated set of objects, not a generic node-pool builder. It takes
@@ -9,7 +9,7 @@ two required inputs, and everything else is fixed.
 
 ## Features
 
-- All ten standard objects from one module. No nested modules, no sub-module calls.
+- All nine standard objects from one module. No nested modules, no sub-module calls.
 - Karpenter **v1** schemas only (`karpenter.sh/v1`, `karpenter.k8s.aws/v1`).
 - Two required inputs: `subnets` and `cluster_name`. The node role name is derived from
   the cluster name and is the only other thing a caller normally touches.
@@ -92,7 +92,6 @@ module "chalk_karpenter" {
 | `EC2NodeClass` | `al2023` | AL2023 (`al2023@latest` alias), 200Gi gp3 root, IMDSv2 required |
 | `EC2NodeClass` | `al2023-offline-lssd` | As above plus `instanceStorePolicy: RAID0` for local NVMe scratch |
 | `EC2NodeClass` | `gvisor` | As `al2023` plus MIME-multipart user data that installs `runsc` and registers it with containerd |
-| `NodePool` | `oss-controllers` | `t3.medium` only, 6 vCPU limit, untainted — where open-source controllers land |
 | `NodePool` | `chalk-infrastructure` | Tainted `chalk.ai/workload-type=infrastructure` |
 | `NodePool` | `chalk-online` | Tainted `chalk.ai/workload-type=online` |
 | `NodePool` | `chalk-offline` | Tainted `chalk.ai/workload-type=offline`, requires local NVMe |
@@ -100,8 +99,7 @@ module "chalk_karpenter" {
 | `NodePool` | `chalk-compute-gpu` | NVIDIA g/p families, tainted `nvidia.com/gpu=true` |
 | `RuntimeClass` | `gvisor` | `handler: runsc`, with the node selector and three tolerations that place a pod on `chalk-compute` |
 
-Every `NodePool` except `oss-controllers` carries a 128000 vCPU limit and the
-`chalk.ai/managed-by=chalk` taint.
+Every `NodePool` carries a 128000 vCPU limit and the `chalk.ai/managed-by=chalk` taint.
 
 ## Why this module is not configurable
 
@@ -165,8 +163,6 @@ remove it on the assumption that it is decorative.
 - **Every `NodePool` declares an explicit dependency** on the node class it references, so
   a fresh apply does not briefly leave a pool pointing at a `nodeClassRef` that does not
   resolve yet.
-- **`oss-controllers` is applied without `wait` / `wait_for_rollout`,** unlike every other
-  pool, so an apply does not block on it.
 
 ## What this module does not do
 
