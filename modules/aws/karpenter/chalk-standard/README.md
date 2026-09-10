@@ -11,11 +11,10 @@ two required inputs, and everything else is fixed.
 
 - All ten standard objects from one module. No nested modules, no sub-module calls.
 - Karpenter **v1** schemas only (`karpenter.sh/v1`, `karpenter.k8s.aws/v1`).
-- Two required inputs: `subnets` and `cluster_name`. The node role name is derived from
-  the cluster name and is the only other thing a caller normally touches.
+- Exactly two inputs, both required: `subnets` and `cluster_name`. There is nothing else
+  to configure. The node role name is derived from the cluster name.
 - Pool names, labels, taints, requirements, boot volume sizes, disruption policy and
   vCPU limits are all fixed at Chalk's standard values.
-- Optional `chalk-nap` fallback pool for dataplane-v2 clusters, behind one input.
 - Manifests are rendered from YAML template files, so the object that will be applied is
   readable as YAML in the repository rather than assembled by `yamlencode`.
 - Characterization tests pin every one of the ten manifests in full.
@@ -75,30 +74,6 @@ provider "kubectl" {
 }
 ```
 
-### Dataplane v2
-
-```hcl
-module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
-
-  cluster_name            = "example-cluster"
-  subnets                 = ["subnet-xxxxx", "subnet-yyyyy"]
-  chalk_dataplane_version = "CHALK_DATAPLANE_VERSION_V2"
-}
-```
-
-### Cluster whose node role does not follow the Chalk convention
-
-```hcl
-module "chalk_karpenter" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/karpenter/chalk-standard?ref=v0.3.0"
-
-  cluster_name   = "example-cluster"
-  subnets        = ["subnet-xxxxx", "subnet-yyyyy"]
-  node_role_name = "example-cluster-node-role"
-}
-```
-
 ## What this module creates
 
 | Object | Name | Notes |
@@ -110,7 +85,6 @@ module "chalk_karpenter" {
 | `NodePool` | `chalk-infrastructure` | Tainted `chalk.ai/workload-type=infrastructure` |
 | `NodePool` | `chalk-online` | Tainted `chalk.ai/workload-type=online` |
 | `NodePool` | `chalk-offline` | Tainted `chalk.ai/workload-type=offline`, requires local NVMe |
-| `NodePool` | `chalk-nap` | **Dataplane v2 only.** Same capacity as `chalk-online` but with *no* workload-type taint |
 | `NodePool` | `chalk-compute` | gVisor sandboxed compute, triple-tainted |
 | `NodePool` | `chalk-compute-gpu` | NVIDIA g/p families, tainted `nvidia.com/gpu=true` |
 | `RuntimeClass` | `gvisor` | `handler: runsc`, with the node selector and three tolerations that place a pod on `chalk-compute` |
@@ -201,31 +175,28 @@ Two further things this module does not do:
 - **It does not install the NVIDIA device plugin.** Without a device-plugin DaemonSet
   that tolerates `nvidia.com/gpu`, nodes from `chalk-compute-gpu` never advertise the
   `nvidia.com/gpu` resource, and nothing schedules on them.
-- **It grants nothing in IAM.** `node_role_name` names a role that must already exist and
-  already be mapped in the cluster's auth configuration.
+- **It grants nothing in IAM.** The derived node role must already exist and already be
+  mapped in the cluster's auth configuration.
 
 ## Inputs
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | subnets | list(string) | _required_ | Subnet IDs Karpenter may launch nodes into. One `{ id = <subnet> }` selector term per element. Must be non-empty |
-| cluster_name | string | _required_ | EKS cluster name. Keys both `securityGroupSelectorTerms` tag terms, the node class `tags`, and the default node role name. Must be non-empty |
-| node_role_name | string | `null` → `"<cluster_name>-Managed-Node-Role"` | Bare IAM role **name** (not ARN) for launched nodes |
-| chalk_dataplane_version | string | `null` | Exactly `"CHALK_DATAPLANE_VERSION_V2"` adds the `chalk-nap` pool. Any other value, including `null`, does not |
+| cluster_name | string | _required_ | EKS cluster name. Keys both `securityGroupSelectorTerms` tag terms, the node class `tags`, and the derived node role name. Must be non-empty |
 
-`chalk_dataplane_version` is an exact string comparison with no validation behind it. A
-near-miss value silently produces nine objects instead of ten rather than failing — there
-is a test asserting exactly that, so the behaviour is pinned rather than accidental.
+That is the entire input surface. Everything else — pool names, labels, taints,
+requirements, volume sizes, the vCPU ceiling — is a `local` in `main.tf`, so changing one
+goes through review rather than through a caller's `.tfvars`.
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| node_role_name | The role name actually used — the input, or the derived default |
+| node_role_name | The derived role name, `"<cluster_name>-Managed-Node-Role"` |
 | ec2_node_class_names | Names of the EC2NodeClass objects created |
-| node_pool_names | Names of every NodePool created, sorted. Includes `chalk-nap` only on dataplane v2 |
+| node_pool_names | Names of every NodePool created, sorted |
 | runtime_class_name | Name of the gVisor RuntimeClass, or `null` if the gVisor objects are off |
-| chalk_nap_enabled | Whether the dataplane-v2 fallback pool was created |
 | subnet_selector_terms | The selector terms rendered into every EC2NodeClass |
 | max_cpu | Aggregate vCPU limit applied to every Chalk NodePool |
 | boot_volume_size | Boot volume size on the `al2023` and `gvisor` node classes |
@@ -251,10 +222,9 @@ needs no kubeconfig and no credentials.
 |------|--------|
 | `tests/manifests.tftest.hcl` | Every one of the ten objects, each with its **full** decoded manifest pinned |
 | `tests/subnets.tftest.hcl` | Single and multiple subnets, order, and that all three node classes select the same set |
-| `tests/dataplane.tftest.hcl` | The `chalk-nap` gate, including that enabling it changes nothing else |
 | `tests/v1_only.tftest.hcl` | No `v1beta1` anywhere, no `amiFamily`, every `nodeClassRef` carries group + kind + name |
 | `tests/requirements.tftest.hcl` | The workload / offline / compute / GPU requirement lists, field by field |
-| `tests/node_role.tftest.hcl` | The derived default and an explicit override |
+| `tests/node_role.tftest.hcl` | That the derived role name reaches every node class |
 | `tests/validation.tftest.hcl` | Each input validation, one violation per run |
 
 The whole-manifest pins in `tests/manifests.tftest.hcl` are the ones that matter. A

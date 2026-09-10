@@ -73,8 +73,7 @@ Chalk's standard set, declare them yourself against the Karpenter CRDs.
 **Features**:
 - All ten standard objects from one module -- no nested modules
 - Karpenter **v1** schemas only (`karpenter.sh/v1`, `karpenter.k8s.aws/v1`)
-- Two required inputs: `subnets` and `cluster_name`
-- Optional `chalk-nap` fallback pool for dataplane-v2 clusters
+- Exactly two inputs, both required: `subnets` and `cluster_name`
 - Creates the `EC2NodeClass` and `RuntimeClass` objects the Chalk UI cannot create at all
 
 **Requires** the `alekc/kubectl` provider `~> 2.3`, and a working Karpenter controller --
@@ -106,9 +105,6 @@ module "chalk_karpenter" {
 
   cluster_name = "example-cluster"
   subnets      = ["subnet-xxxxx", "subnet-yyyyy", "subnet-zzzzz"]
-
-  # Only on dataplane-v2 clusters; adds the untainted chalk-nap fallback pool.
-  # chalk_dataplane_version = "CHALK_DATAPLANE_VERSION_V2"
 }
 
 output "karpenter_node_pools" {

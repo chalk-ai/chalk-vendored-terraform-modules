@@ -1,7 +1,7 @@
-# This module is deliberately almost input-free. It creates one fixed, opinionated
+# This module takes two inputs and nothing else. It creates one fixed, opinionated
 # set of Karpenter objects, so every shape decision is a `local` in main.tf rather
-# than a variable. Only genuinely per-cluster facts -- where nodes go, and what the
-# cluster is called -- are inputs.
+# than a variable. The only inputs are the two facts that cannot be known ahead of
+# time: where nodes go, and what the cluster is called.
 
 variable "subnets" {
   description = <<-EOT
@@ -28,7 +28,7 @@ variable "cluster_name" {
       * `securityGroupSelectorTerms` -- matched against both the `karpenter.sh/discovery`
         and the `aws:eks:cluster-name` tag, so either tagging convention works.
       * the EC2NodeClass `tags` block, so launched instances carry `karpenter.sh/discovery`.
-      * the default value of `node_role_name`.
+      * the node role name, derived as `"<cluster_name>-Managed-Node-Role"`.
   EOT
   type        = string
 
@@ -36,46 +36,4 @@ variable "cluster_name" {
     condition     = length(trimspace(var.cluster_name)) > 0
     error_message = "cluster_name must not be empty. It keys the security-group selector terms and the instance tags; an empty value produces node classes that match no security group."
   }
-}
-
-variable "node_role_name" {
-  description = <<-EOT
-    Name (not ARN) of the IAM role Karpenter assigns to nodes it launches. Defaults to
-    `"<cluster_name>-Managed-Node-Role"`, which is the naming convention Chalk's own
-    clusters use.
-
-    Override this when the cluster's managed node role was created outside that
-    convention. The role must already exist and must be mapped in the cluster's auth
-    configuration -- this module does not create or grant anything in IAM.
-  EOT
-  type        = string
-  default     = null
-
-  validation {
-    # `role` in the EC2NodeClass schema takes a bare role name; Karpenter resolves the
-    # ARN itself. Passing an ARN is accepted by the API server and then fails at node
-    # launch time, which is an expensive place to discover a typo.
-    condition     = !startswith(coalesce(var.node_role_name, "unset"), "arn:")
-    error_message = "node_role_name must be a bare IAM role name, not an ARN. Karpenter's EC2NodeClass `role` field resolves the ARN itself; an ARN here is accepted by the API server and only fails later, at node launch."
-  }
-
-  validation {
-    condition     = length(trimspace(coalesce(var.node_role_name, "unset"))) > 0
-    error_message = "node_role_name must not be blank. Leave it unset to derive \"<cluster_name>-Managed-Node-Role\" instead."
-  }
-}
-
-variable "chalk_dataplane_version" {
-  description = <<-EOT
-    Chalk dataplane version of the target cluster. When -- and only when -- this is
-    exactly `"CHALK_DATAPLANE_VERSION_V2"`, an extra `chalk-nap` NodePool is created:
-    an online-compatible fallback pool for Chalk-managed workloads that do not carry a
-    `chalk.ai/workload-type` toleration.
-
-    Any other value, including `null`, leaves `chalk-nap` uncreated. The comparison is
-    an exact string match, so a misspelling silently produces nine objects instead of
-    ten.
-  EOT
-  type        = string
-  default     = null
 }
