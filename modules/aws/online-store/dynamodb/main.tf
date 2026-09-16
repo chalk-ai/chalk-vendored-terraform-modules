@@ -44,6 +44,12 @@ variable "autoscaling_write" {
   }
 }
 
+variable "deletion_protection_enabled" {
+  description = "Enables deletion protection for the table"
+  type        = bool
+  default     = false
+}
+
 resource "aws_dynamodb_table" "main" {
   name = var.table_name
 
@@ -64,7 +70,7 @@ resource "aws_dynamodb_table" "main" {
     attribute_name = "__exp__"
   }
 
-  deletion_protection_enabled = false
+  deletion_protection_enabled = var.deletion_protection_enabled
   table_class                 = "STANDARD"
 
   billing_mode   = var.billing_mode
