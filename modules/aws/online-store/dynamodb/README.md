@@ -58,6 +58,7 @@ module "chalk_online_store" {
 | write_capacity | number | `null` | Write capacity units (PROVISIONED mode only) |
 | autoscaling_read | map(string) | See below | Read autoscaling configuration |
 | autoscaling_write | map(string) | See below | Write autoscaling configuration |
+| deletion_protection_enabled | bool | `false` | Enable deletion protection for the table |
 
 ## Outputs
 
