@@ -100,8 +100,10 @@ resource "aws_elasticache_replication_group" "valkey" {
   multi_az_enabled           = var.multi_az_enabled
   automatic_failover_enabled = var.automatic_failover_enabled
 
-  # Encryption
+  # Encryption. The mode is only meaningful when transit encryption is on; leaving it null
+  # otherwise lets the provider keep its computed value instead of sending a contradiction.
   transit_encryption_enabled = var.transit_encryption_enabled
+  transit_encryption_mode    = var.transit_encryption_enabled ? var.transit_encryption_mode : null
   at_rest_encryption_enabled = var.at_rest_encryption_enabled
 
   # Maintenance and backups
@@ -123,6 +125,18 @@ resource "aws_elasticache_replication_group" "valkey" {
     aws_elasticache_subnet_group.valkey,
     aws_security_group.valkey
   ]
+
+  # The provider defaults (create 60m, update 40m, delete 45m) are too short for a snapshot
+  # restore or a large teardown. A create timeout is the damaging one: the provider sets the
+  # resource ID before it begins waiting, so a timeout leaves the resource tainted and the next
+  # apply destroys and recreates it -- discarding a restore that may have been running for hours.
+  # A generous value is safe: the create waiter treats create-failed as terminal, so a genuinely
+  # failed create still returns immediately rather than hanging until the deadline.
+  timeouts {
+    create = var.timeouts
+    update = var.timeouts
+    delete = var.timeouts
+  }
 
   lifecycle {
     # The AWS provider writes snapshot_name on create but never refreshes it, so without this a
@@ -171,8 +185,14 @@ resource "aws_elasticache_replication_group" "valkey" {
 locals {
   configuration_endpoint = aws_elasticache_replication_group.valkey.configuration_endpoint_address
 
+  # The published URI follows the mode, not merely whether TLS is available. Under "preferred" the
+  # cluster accepts both TLS and plaintext, and the reason to choose it is that some clients are
+  # not on TLS yet -- so the scheme handed to those clients stays redis://. Only "required"
+  # publishes rediss://.
+  tls_required = var.transit_encryption_enabled && var.transit_encryption_mode == "required"
+
   # Connection string following GCP patterns
-  redis_connection_string = var.transit_encryption_enabled ? "rediss://${local.configuration_endpoint}:${var.port}?clustered=true#insecure" : "redis://${local.configuration_endpoint}:${var.port}?clustered=true#insecure"
+  redis_connection_string = local.tls_required ? "rediss://${local.configuration_endpoint}:${var.port}?clustered=true#insecure" : "redis://${local.configuration_endpoint}:${var.port}?clustered=true#insecure"
 }
 
 # AWS Secrets Manager secret for Redis-compatible endpoint

@@ -71,6 +71,17 @@ variable "transit_encryption_enabled" {
   default     = true
 }
 
+variable "transit_encryption_mode" {
+  description = "Whether clients must connect over TLS (\"required\") or may use TLS or plaintext (\"preferred\"). Only applied when transit_encryption_enabled is true. Set \"preferred\" when restoring a cluster whose clients are not yet all on TLS; see the README, as the connection URI the module publishes follows this setting."
+  type        = string
+  default     = "required"
+
+  validation {
+    condition     = contains(["preferred", "required"], var.transit_encryption_mode)
+    error_message = "transit_encryption_mode must be either preferred or required."
+  }
+}
+
 variable "at_rest_encryption_enabled" {
   description = "Enable encryption at rest"
   type        = bool
@@ -130,4 +141,10 @@ variable "durability" {
     condition     = contains(["default", "async", "sync", "disabled"], coalesce(var.durability, "default"))
     error_message = "durability must be one of: default, async, sync, disabled."
   }
+}
+
+variable "timeouts" {
+  description = "Timeout applied to every replication group operation: create, update and delete. The default is longer than the AWS provider's own 60m/40m/45m because a snapshot restore or a large teardown routinely exceeds them. Raise it for very large restores; restore time scales with bytes per target shard, not with total dataset size."
+  type        = string
+  default     = "120m"
 }

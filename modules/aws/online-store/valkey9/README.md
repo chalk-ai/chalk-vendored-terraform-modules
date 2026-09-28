@@ -116,7 +116,9 @@ an apply:
 - **Cluster mode enabled** — implicit; this module only builds cluster-mode replication groups
 - **Multi-AZ enabled** (`multi_az_enabled = true`)
 - **At least one replica per shard** (`replicas_per_node_group >= 1`)
-- **Transit encryption enabled at creation** (`transit_encryption_enabled = true`)
+- **Transit encryption enabled at creation** (`transit_encryption_enabled = true`). Durability
+  constrains only whether transit encryption is on, not `transit_encryption_mode` — a durable
+  cluster may run `preferred`.
 - A **Graviton node family**: R8g, R7g, R6g, M8g, M7g, M6g, C8gn, C7gn
 
 > The module default for `node_type` is `cache.m5.large`, which is **not** a Graviton family. A caller
@@ -167,6 +169,7 @@ redistributes slots across the new shard count during the restore.
 | multi_az_enabled | bool | `true` | Enable Multi-AZ deployment |
 | automatic_failover_enabled | bool | `true` | Enable automatic failover for the cluster |
 | transit_encryption_enabled | bool | `true` | Enable encryption in transit |
+| transit_encryption_mode | string | `"required"` | `required` (TLS only) or `preferred` (TLS or plaintext). Applied only when transit encryption is enabled. Determines the scheme of the published URI |
 | at_rest_encryption_enabled | bool | `true` | Enable encryption at rest |
 | auto_minor_version_upgrade | bool | `true` | Enable automatic minor version upgrades |
 | maintenance_window | string | `"sun:05:00-sun:06:00"` | Weekly time range for system maintenance |
@@ -176,6 +179,7 @@ redistributes slots across the new shard count during the restore.
 | tags | map(string) | `{}` | Tags to apply to all resources |
 | snapshot_name | string | `null` | Name of an ElastiCache snapshot to restore the new cluster from. Create-only / ForceNew |
 | durability | string | `null` | Multi-AZ transactional log durability: `default`, `async`, `sync`, `disabled`. Create-only / ForceNew |
+| timeouts | string | `"120m"` | Timeout applied to the create, update and delete operations |
 
 ## Outputs
 
@@ -214,7 +218,37 @@ The module creates an AWS Secrets Manager secret named `<cluster_id>-redis-uri` 
 <scheme>://<configuration_endpoint>:<port>?clustered=true#insecure
 ```
 
-The scheme is `rediss://` when `transit_encryption_enabled` is true (the default), otherwise `redis://`.
+The scheme is `rediss://` only when transit encryption is enabled **and**
+`transit_encryption_mode` is `required`. Under `preferred` the cluster accepts TLS and plaintext
+alike, and the reason to choose `preferred` is that some clients are not on TLS yet — so the
+published URI stays `redis://` and those clients keep working.
+
+### Choosing the mode
+
+`transit_encryption_mode` is not `ForceNew`, but the migration is still one-directional in
+practice: AWS requires that enabling encryption on an existing replication group go to `preferred`
+first and to `required` in a later apply. Pick the mode that matches the clients at creation rather
+than planning to change it, particularly when restoring a snapshot into a replacement for a cluster
+whose clients connect in plaintext today.
+
+## Timeouts
+
+`timeouts` sets a single value for the create, update and delete operations. It defaults to `120m`,
+longer than the AWS provider's own 60m / 40m / 45m, because the provider defaults are too short for
+a snapshot restore or for tearing down a cluster with many nodes.
+
+The create case is the one that causes damage. The provider records the resource ID before it starts
+waiting for the cluster to become available, so a create that exceeds the timeout leaves the
+resource **tainted** rather than absent — and the next `apply` destroys and recreates it, discarding
+a restore that may have been running for hours. If this happens, recover with `terraform untaint`;
+do not re-run `apply` first.
+
+A generous timeout costs little: the create waiter treats `create-failed` as terminal, so a create
+that genuinely fails still returns straight away instead of waiting out the deadline.
+
+Restore time scales with **bytes per target shard**, not with total dataset size — restoring into
+fewer, larger shards is slower. Size the timeout accordingly; multi-terabyte restores need
+considerably more than the default.
 
 ## Integration with Chalk
 
