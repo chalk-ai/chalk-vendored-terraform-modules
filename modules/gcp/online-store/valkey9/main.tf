@@ -99,9 +99,18 @@ locals {
   # without a fleet-wide rebuild. It costs nothing today. See README, "Certificate authority".
   server_ca_mode = "GOOGLE_MANAGED_SHARED_CA"
 
-  # Eviction policy. `volatile-lru` evicts the least recently used key among those that carry an
-  # expiry. Keys written without a TTL are not eligible for eviction, so the instance has to be
-  # sized for the working set of any such keys.
+  # Eviction policy. Fixed deliberately, and a correctness requirement rather than a preference --
+  # which is why it is not an input. This is also Memorystore's own default.
+  #
+  # The online store holds internal mapping keys written with NO expiry, which the engine needs in
+  # order to interpret every other key. `volatile-lru` reclaims only from keys that carry an
+  # expiry, so the mapping keys are never eviction candidates. Under a policy that can discard
+  # keys regardless of expiry, memory pressure can take the mapping with it, and the store is then
+  # unreadable rather than merely cold.
+  #
+  # The accepted consequence: on a full instance with no expiring keys left to reclaim, writes are
+  # refused with an out-of-memory error rather than discarding something that must be kept. That
+  # makes sizing load-bearing, since `maxmemory` is left unset. See README, "Eviction policy".
   engine_configs = {
     "maxmemory-policy" = "volatile-lru"
   }

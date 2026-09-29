@@ -10,15 +10,21 @@ inside the module. Each of those is either immutable in the Memorystore API or s
 cannot consume the alternative of, so exposing it would only let you build an instance Chalk cannot
 use, or cannot change later without a rebuild.
 
-## Read this first: two things that will surprise you
+## Read this first: three things that will surprise you
 
-**1. `deletion_protection_enabled` defaults to `true`.** This is the opposite of the Memorystore API
+**1. The eviction policy is fixed at `volatile-lru`, and it is not a tuning knob.** The store holds
+internal mapping keys, written with no expiry, that the engine needs in order to interpret every
+other key. An eviction policy that can discard keys regardless of expiry can discard those, which
+leaves the store **unreadable** rather than merely cold. This is why it is not an input. See
+[Eviction policy](#eviction-policy).
+
+**2. `deletion_protection_enabled` defaults to `true`.** This is the opposite of the Memorystore API
 default, and it is intentional. A `terraform destroy` run against a misread plan empties your online
 feature store. To tear the instance down deliberately, set `deletion_protection_enabled = false`,
 **apply that change**, and then destroy. One extra apply is the entire cost; recovering a cache that
 was destroyed by accident is not.
 
-**2. The published URI ends in `#insecure`, and that is not a mistake.** See
+**3. The published URI ends in `#insecure`, and that is not a mistake.** See
 [Encrypted in transit, unverified certificate](#encrypted-in-transit-unverified-certificate). It is
 the single most likely thing in this module for a well-meaning reader to "fix", and removing it does
 not harden anything — it breaks every connection.
@@ -285,14 +291,39 @@ principal for your deployment.
 Then, in the Chalk dashboard: **Integrations > Online Store > Redis**, and set **Secret Name** to
 the `secret_id` output.
 
+## Eviction policy
+
+`maxmemory-policy` is fixed at **`volatile-lru`**, which is also Memorystore's own default. It is
+deliberately not an input, because it is a correctness requirement rather than a preference.
+
+The online store holds two kinds of key. Feature values carry an expiry. Alongside them the store
+keeps a small set of **internal mapping keys, written with no expiry**, which the engine needs in
+order to interpret everything else in the store.
+
+`volatile-lru` reclaims memory only from keys that carry an expiry, so the mapping keys are never
+candidates for eviction. Under a policy that can discard keys regardless of expiry, memory pressure
+can take the mapping with it — and at that point the store is not cold, it is **unreadable**:
+the data that remains cannot be interpreted, and recovery means rebuilding state rather than
+waiting for a cache to warm.
+
+**The tradeoff, stated plainly: on a full instance, writes are refused rather than evicting.** If
+the instance reaches its memory limit and no expiring keys are left to reclaim, Valkey returns an
+out-of-memory error on write instead of discarding something it must keep. That is the intended
+behaviour — a write that fails loudly is a better outcome than a store that quietly stops making
+sense.
+
+That makes sizing load-bearing. `maxmemory` is left unset, so Memorystore's per-node default
+applies; size the instance for your working set, including the keys you write without a TTL. See
+[Sizing](#sizing).
+
 ## Sizing
 
 Capacity is `shard_count` × `node_type`. `maxmemory` is deliberately left unset so Memorystore's own
 per-node default applies.
 
-**Eviction is `volatile-lru`.** When the instance reaches its memory limit it evicts the least
-recently used key among those that carry an expiry. Keys written without a TTL are not eligible for
-eviction, so size the instance for the working set of any keys you write without one.
+Because the [eviction policy](#eviction-policy) reclaims only from keys that carry an expiry, a
+full instance refuses writes rather than discarding keys it must keep. Size for your working set,
+including any keys written without a TTL.
 
 The Valkey engine is **single-threaded per shard**. A larger `node_type` raises capacity but not the
 per-shard write ceiling, so a write-throughput problem is solved by adding shards, not by picking a

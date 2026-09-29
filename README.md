@@ -72,7 +72,9 @@ consumer's instance on their next apply. A suffixed path means a future engine d
 **new** module, and consumers opt in by changing `source` instead of being carried along silently.
 
 **Features**:
-- Cluster mode, multi-zone, encrypted in transit, with `volatile-lru` eviction
+- Cluster mode, multi-zone, encrypted in transit, with a **fixed** `volatile-lru` eviction policy
+  -- not a tuning knob, and not an input: the store's internal mapping keys carry no expiry, and a
+  policy that can evict them leaves the store unreadable rather than merely cold
 - RDB persistence **and** daily automated backups with 30-day retention, both enforced
 - One Secret Manager secret holding a Chalk-format connection URI, derived from the instance's
   actual settings rather than hardcoded, and built from the cluster's **discovery** endpoint
