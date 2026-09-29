@@ -4,7 +4,7 @@ Terraform modules for deploying auxiliary infrastructure alongside Chalk deploym
 
 ## Overview
 
-Self-contained modules for deploying infrastructure components used by Chalk. Each module creates the necessary resources and an AWS Secrets Manager secret containing the connection URI.
+Self-contained modules for deploying infrastructure components used by Chalk. Each online-store module creates the necessary resources plus a secret containing the connection URI -- AWS Secrets Manager on AWS, Google Secret Manager on GCP.
 
 ## Available Modules
 
@@ -57,6 +57,38 @@ defaults, same outputs — kept only so that existing Valkey 8 clusters have a s
 features will be added. Use `valkey9` for new clusters.
 
 See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valkey8/README.md).
+
+### GCP Online Store Modules
+
+#### Valkey (`modules/gcp/online-store/valkey`)
+
+Redis-compatible in-memory data store using **GCP Memorystore for Valkey**, configured the way
+Chalk wants it, with a deliberately small input surface: four required inputs and a handful of
+sizing knobs.
+
+No version suffix, unlike the AWS modules. On GCP `engine_version` is mutable in place and
+Memorystore supports in-place upgrades, so a suffix would encode a constraint that does not exist.
+
+**Features**:
+- Cluster mode, multi-zone, encrypted in transit, with `allkeys-lru` eviction
+- RDB persistence **and** daily automated backups with 30-day retention, both enforced
+- One Secret Manager secret holding a Chalk-format connection URI, derived from the instance's
+  actual settings rather than hardcoded
+- Optional creation of the Private Service Connect service connection policy the instance requires
+- `deletion_protection_enabled` defaults to **`true`** -- the opposite of the API default, so a
+  misread `terraform destroy` cannot silently empty the online feature store
+
+**Requires** the `hashicorp/google` provider `>= 7.24.0` -- the floor is set by `server_ca_mode`,
+which the module pins to the regional shared CA. That attribute is create-only, so it has to be
+chosen when the instance is born.
+
+**Key Outputs**:
+- `secret_id`: Secret name to configure in the Chalk dashboard
+- `endpoint_host` / `endpoint_port`: the instance's Private Service Connect endpoint
+
+See [`modules/gcp/online-store/valkey/README.md`](modules/gcp/online-store/valkey/README.md), which
+explains the prerequisites (service connection policy, APIs, firewall ports **6379 and
+11000-13047**) and why the published URI ends in `#insecure`.
 
 ### AWS Karpenter Modules
 
@@ -152,6 +184,31 @@ output "secret_name" {
 }
 ```
 
+### GCP Valkey (Memorystore)
+
+```hcl
+module "chalk_online_store" {
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.4.0"
+
+  project_id  = "example-project"
+  region      = "us-central1"
+  network     = "example-vpc"
+  instance_id = "chalk-online-store"
+
+  shard_count   = 3
+  replica_count = 1
+  node_type     = "STANDARD_SMALL"
+
+  labels = {
+    environment = "example-env"
+  }
+}
+
+output "secret_name" {
+  value = module.chalk_online_store.secret_id
+}
+```
+
 ## Versioning
 
 Modules are consumed by git tag. **Always pin `?ref=<tag>`** — never `?ref=main`.
@@ -190,4 +247,7 @@ terraform apply
 
 **For Valkey/Redis**:
 - Navigate to **Integrations > Online Store > Redis**
-- Set **Secret Name** to the `valkey_endpoint_redis_secret_name` output value
+- On AWS, set **Secret Name** to the `valkey_endpoint_redis_secret_name` output value
+- On GCP, set **Secret Name** to the `secret_id` output value, and first grant Chalk's service
+  account `roles/secretmanager.secretAccessor` on that secret -- the GCP module publishes the
+  secret but deliberately grants no access to it
