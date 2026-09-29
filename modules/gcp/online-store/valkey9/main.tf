@@ -99,10 +99,11 @@ locals {
   # without a fleet-wide rebuild. It costs nothing today. See README, "Certificate authority".
   server_ca_mode = "GOOGLE_MANAGED_SHARED_CA"
 
-  # An online feature store is a cache of derived values: evicting the coldest key is correct,
-  # and refusing writes when full is not.
+  # Eviction policy. `volatile-lru` evicts the least recently used key among those that carry an
+  # expiry. Keys written without a TTL are not eligible for eviction, so the instance has to be
+  # sized for the working set of any such keys.
   engine_configs = {
-    "maxmemory-policy" = "allkeys-lru"
+    "maxmemory-policy" = "volatile-lru"
   }
 
   # Backups. Rendering the automated_backup_config block IS the enablement -- the provider derives

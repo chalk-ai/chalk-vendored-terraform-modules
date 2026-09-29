@@ -290,6 +290,10 @@ the `secret_id` output.
 Capacity is `shard_count` × `node_type`. `maxmemory` is deliberately left unset so Memorystore's own
 per-node default applies.
 
+**Eviction is `volatile-lru`.** When the instance reaches its memory limit it evicts the least
+recently used key among those that carry an expiry. Keys written without a TTL are not eligible for
+eviction, so size the instance for the working set of any keys you write without one.
+
 The Valkey engine is **single-threaded per shard**. A larger `node_type` raises capacity but not the
 per-shard write ceiling, so a write-throughput problem is solved by adding shards, not by picking a
 bigger node.
