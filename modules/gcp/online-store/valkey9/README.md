@@ -27,7 +27,7 @@ not harden anything — it breaks every connection.
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.3.3"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey9?ref=v0.3.3"
 
   project_id  = "example-project"
   region      = "us-central1"
@@ -44,7 +44,7 @@ Shared VPC — pass a qualified network path and the module works out the host p
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.3.3"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey9?ref=v0.3.3"
 
   project_id  = "example-service-project"
   region      = "us-central1"
@@ -257,8 +257,7 @@ anchor, not a schedule, and a computed timestamp there would produce perpetual p
 A note on how backups are enabled: the provider derives the API's `automatedBackupMode` from whether
 the `automated_backup_config` block is rendered, and it transmits that field on **every** apply.
 Removing the block from a future version of this module would therefore send `DISABLED` and actively
-turn backups off on existing instances — it is a destructive edit, not a no-op. The test suite
-asserts the block is present for this reason.
+turn backups off on existing instances — it is a destructive edit, not a no-op.
 
 **Restore is unrehearsed.** This module enforces backups from day one but exposes no restore path.
 `managed_backup_source` and `gcs_source` only mean anything at instance creation, and restoring an
@@ -313,11 +312,15 @@ slot range outright. This is a deliberate restriction of choice for an online st
 
 ## Engine version
 
-Unlike AWS ElastiCache — where the engine version is effectively create-only, which is why this repo
-carries both a `valkey8` and a `valkey9` AWS module — GCP's `engine_version` is **mutable in place**
-and Memorystore supports in-place upgrades. That is why this directory is `valkey` and carries no
-version suffix: a suffix here would encode a constraint that does not exist and force a new
-directory for every minor release.
+On Memorystore, `engine_version` is **mutable in place** — Memorystore supports in-place upgrades,
+unlike AWS ElastiCache where the engine version is effectively create-only.
+
+That mutability is exactly why this module carries a `9` in its path. Because the version can change
+in place, raising this module's default engine version would upgrade an existing consumer's instance
+on their next apply, without them asking for it. A version-suffixed directory prevents that: a
+future engine default ships as a **new** module path, so you opt in by changing `source` rather than
+being carried along silently. (The AWS modules are suffixed too, but for the opposite reason — there
+the suffix guards a create-only field; here it guards a silent in-place change.)
 
 The provider enforces no enum on `engine_version`, so the module validates it against the four
 values GCP supports. `VALKEY_9_1` is the default and is also GCP's own default for new instances.
@@ -373,15 +376,6 @@ against the `google_memorystore_instance` **data source**, which can read the de
 The provider constraint is a floor rather than a pessimistic (`~>`) pin, because consumers compose
 this module with their own google provider and a pessimistic constraint would make it uninstallable
 alongside a newer one.
-
-Running the bundled test suite additionally needs Terraform `>= 1.11` for `state_key`. The suite
-uses a mocked provider: it reads no credentials, contacts no API and creates nothing.
-
-```bash
-terraform init -backend=false
-terraform validate
-terraform test
-```
 
 ## Attribution
 

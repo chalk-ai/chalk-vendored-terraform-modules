@@ -60,14 +60,16 @@ See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valk
 
 ### GCP Online Store Modules
 
-#### Valkey (`modules/gcp/online-store/valkey`)
+#### Valkey 9 (`modules/gcp/online-store/valkey9`)
 
 Redis-compatible in-memory data store using **GCP Memorystore for Valkey**, configured the way
 Chalk wants it, with a deliberately small input surface: four required inputs and a handful of
 sizing knobs.
 
-No version suffix, unlike the AWS modules. On GCP `engine_version` is mutable in place and
-Memorystore supports in-place upgrades, so a suffix would encode a constraint that does not exist.
+Version-suffixed like the AWS modules, but for a different reason. On GCP `engine_version` is
+mutable in place, so raising this module's default engine version would upgrade an existing
+consumer's instance on their next apply. A suffixed path means a future engine default ships as a
+**new** module, and consumers opt in by changing `source` instead of being carried along silently.
 
 **Features**:
 - Cluster mode, multi-zone, encrypted in transit, with `allkeys-lru` eviction
@@ -92,7 +94,7 @@ chosen when the instance is born.
 - `secret_id`: Secret name to configure in the Chalk dashboard
 - `endpoint_host` / `endpoint_port`: the instance's Private Service Connect discovery endpoint
 
-See [`modules/gcp/online-store/valkey/README.md`](modules/gcp/online-store/valkey/README.md), which
+See [`modules/gcp/online-store/valkey9/README.md`](modules/gcp/online-store/valkey9/README.md), which
 explains the prerequisites (service connection policy, the full API list -- note
 `serviceconsumermanagement.googleapis.com`, without which instance creation fails -- and firewall
 ports **6379 and 11000-13047**) and why the published URI ends in `#insecure`.
@@ -191,11 +193,11 @@ output "secret_name" {
 }
 ```
 
-### GCP Valkey (Memorystore)
+### GCP Valkey 9 (Memorystore)
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.3.3"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey9?ref=v0.3.3"
 
   project_id  = "example-project"
   region      = "us-central1"

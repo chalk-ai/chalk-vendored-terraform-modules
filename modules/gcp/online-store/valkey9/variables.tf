@@ -100,7 +100,7 @@ variable "node_type" {
 }
 
 variable "engine_version" {
-  description = "Valkey engine version. Unlike AWS ElastiCache this is mutable in place, so there is no version-suffixed copy of this module. The provider enforces no enum, so a typo would otherwise fail at apply rather than at plan. Downgrades are not guarded by this module -- see the README."
+  description = "Valkey engine version. Memorystore allows this to change IN PLACE, which is why the module path carries a version suffix: a future engine default ships as a new module path rather than silently upgrading an existing instance on its next apply. The provider enforces no enum, so a typo would otherwise fail at apply rather than at plan. Downgrades are not guarded by this module -- see the README."
   type        = string
   default     = "VALKEY_9_1"
 
