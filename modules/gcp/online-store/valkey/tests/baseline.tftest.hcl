@@ -675,6 +675,40 @@ run "unknown_node_type_is_rejected" {
   expect_failures = [var.node_type]
 }
 
+# The three CUSTOM_* types exist in the provider enum but Google offers them for Cluster Mode
+# DISABLED instances only, and this module always builds a CLUSTER. Accepting them meant three of
+# the ten advertised values passed plan and failed at apply -- exactly what these validations
+# exist to prevent.
+run "custom_pico_node_type_is_rejected" {
+  command = plan
+
+  variables {
+    node_type = "CUSTOM_PICO"
+  }
+
+  expect_failures = [var.node_type]
+}
+
+run "custom_micro_node_type_is_rejected" {
+  command = plan
+
+  variables {
+    node_type = "CUSTOM_MICRO"
+  }
+
+  expect_failures = [var.node_type]
+}
+
+run "custom_mini_node_type_is_rejected" {
+  command = plan
+
+  variables {
+    node_type = "CUSTOM_MINI"
+  }
+
+  expect_failures = [var.node_type]
+}
+
 run "full_node_type_set_is_accepted" {
   command = plan
 
@@ -684,7 +718,20 @@ run "full_node_type_set_is_accepted" {
 
   assert {
     condition     = output.node_type == "HIGHMEM_2XLARGE"
-    error_message = "the module must accept all ten node types the provider supports, not just the four the upstream module documented"
+    error_message = "the module must accept all seven node types Memorystore offers for Cluster Mode Enabled instances, not just the four the upstream module documented"
+  }
+}
+
+run "highcpu_medium_node_type_is_accepted" {
+  command = plan
+
+  variables {
+    node_type = "HIGHCPU_MEDIUM"
+  }
+
+  assert {
+    condition     = output.node_type == "HIGHCPU_MEDIUM"
+    error_message = "HIGHCPU_MEDIUM is a valid Cluster-Mode-Enabled node type and must not be dropped along with the CUSTOM_* ones"
   }
 }
 
@@ -778,4 +825,102 @@ run "empty_secret_replication_location_is_rejected" {
   }
 
   expect_failures = [var.secret_replication_location]
+}
+
+# ---------------------------------------------------------------------------------------------
+# Customer-managed encryption keys
+#
+# `kms_key` is ForceNew and, unusually for this resource, NOT Computed -- so null must omit the
+# attribute cleanly. It is also the only way an organization enforcing
+# constraints/gcp.restrictNonCmekServices can create an instance at all, and it cannot be added
+# afterwards, so getting it wrong is unrecoverable rather than merely inconvenient.
+# ---------------------------------------------------------------------------------------------
+
+run "kms_key_is_absent_by_default" {
+  command = plan
+
+  assert {
+    condition     = google_memorystore_instance.valkey.kms_key == null
+    error_message = "kms_key is no longer omitted by default. It is Optional and NOT Computed, so any non-null default would silently make every instance CMEK-encrypted -- and, being ForceNew, unfixable in place."
+  }
+}
+
+run "kms_key_in_the_instance_region_is_accepted" {
+  command = plan
+
+  variables {
+    region  = "us-central1"
+    kms_key = "projects/example-kms-project/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
+  }
+
+  assert {
+    condition     = google_memorystore_instance.valkey.kms_key == "projects/example-kms-project/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
+    error_message = "kms_key is no longer passed through to the instance"
+  }
+}
+
+# The key's PROJECT is deliberately not validated: a central KMS project is a normal arrangement,
+# and which key projects are permitted is governed by
+# constraints/gcp.restrictCmekCryptoKeyProjects, which is the customer's policy and not ours.
+run "kms_key_in_a_different_project_is_accepted" {
+  command = plan
+
+  variables {
+    project_id = "example-project"
+    region     = "us-central1"
+    kms_key    = "projects/example-central-kms/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
+  }
+
+  assert {
+    condition     = google_memorystore_instance.valkey.kms_key == "projects/example-central-kms/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
+    error_message = "the module now rejects a key held in a separate KMS project, which is a normal and supported arrangement"
+  }
+}
+
+run "kms_key_in_another_region_is_rejected" {
+  command = plan
+
+  variables {
+    region  = "us-central1"
+    kms_key = "projects/example-kms-project/locations/europe-west1/keyRings/example-ring/cryptoKeys/example-key"
+  }
+
+  # Google requires the key ring, the key and the instance to share a location and fails the
+  # create request otherwise -- on a ForceNew attribute, so it cannot be corrected in place.
+  expect_failures = [google_memorystore_instance.valkey]
+}
+
+run "global_kms_key_is_rejected" {
+  command = plan
+
+  variables {
+    region  = "us-central1"
+    kms_key = "projects/example-kms-project/locations/global/keyRings/example-ring/cryptoKeys/example-key"
+  }
+
+  # `global` is never a Memorystore instance location, so it can never match `region`. This falls
+  # out of the same comparison rather than needing a special case.
+  expect_failures = [google_memorystore_instance.valkey]
+}
+
+run "malformed_kms_key_is_rejected" {
+  command = plan
+
+  variables {
+    kms_key = "example-key"
+  }
+
+  expect_failures = [var.kms_key]
+}
+
+run "kms_key_version_path_is_rejected" {
+  command = plan
+
+  variables {
+    region  = "us-central1"
+    kms_key = "projects/example-kms-project/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key/cryptoKeyVersions/1"
+  }
+
+  # A key VERSION is not a key. Memorystore wants the CryptoKey and rotates versions itself.
+  expect_failures = [var.kms_key]
 }

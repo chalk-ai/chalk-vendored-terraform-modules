@@ -188,6 +188,10 @@ resource "google_memorystore_instance" "valkey" {
 
   deletion_protection_enabled = var.deletion_protection_enabled
 
+  # Optional CMEK. Null omits the attribute entirely -- it is Optional and, unusually, NOT
+  # Computed on this resource, so a null leaves Google-managed encryption in place with no diff.
+  kms_key = var.kms_key
+
   desired_auto_created_endpoints {
     network    = local.network_id
     project_id = local.network_project
@@ -233,6 +237,26 @@ resource "google_memorystore_instance" "valkey" {
   # A Memorystore instance cannot be created until a service connection policy exists for its
   # (project, network, region, service class). When the module owns that policy, order the two.
   depends_on = [google_network_connectivity_service_connection_policy.valkey]
+
+  lifecycle {
+    # Google requires the CryptoKey's key ring, the key and the instance to share a location, and
+    # fails the create request when they differ -- on an attribute that is ForceNew and cannot be
+    # corrected in place afterwards. Compare the key's `locations/` segment to `region` here.
+    #
+    # This belongs in a precondition rather than in the variable's own `validation` block: it
+    # needs `var.region` as well as `var.kms_key`, and cross-variable validation conditions
+    # require Terraform >= 1.9 while this module's floor is >= 1.3. Shape validation stays on the
+    # variable, where it reports against the input the caller actually typed.
+    #
+    # A `global` key ring fails this check by construction, which is correct: `global` is never a
+    # Memorystore instance location.
+    precondition {
+      condition = var.kms_key == null || try(
+        regex("^projects/[^/]+/locations/([^/]+)/keyRings/", var.kms_key)[0], null
+      ) == var.region
+      error_message = "kms_key must live in the same location as the instance. Google requires the key ring, the key and the instance to share a region and rejects the create request otherwise, and kms_key is create-only, so this cannot be corrected after the fact. Create a key ring in `region` and use a key from it. Note that a `global` key ring can never satisfy this."
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------------------------

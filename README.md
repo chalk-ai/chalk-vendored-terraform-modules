@@ -78,6 +78,9 @@ Memorystore supports in-place upgrades, so a suffix would encode a constraint th
 - Optional creation of the Private Service Connect service connection policy the instance requires
 - Optional single-region replication for the secret, for organizations that enforce
   `constraints/gcp.resourceLocations`
+- Optional CMEK (`kms_key`) with a plan-time region-colocation check, for organizations that
+  enforce `constraints/gcp.restrictNonCmekServices` -- where a non-CMEK instance cannot be
+  created at all, and the attribute is create-only
 - `deletion_protection_enabled` defaults to **`true`** -- the opposite of the API default, so a
   misread `terraform destroy` cannot silently empty the online feature store
 
@@ -90,8 +93,9 @@ chosen when the instance is born.
 - `endpoint_host` / `endpoint_port`: the instance's Private Service Connect discovery endpoint
 
 See [`modules/gcp/online-store/valkey/README.md`](modules/gcp/online-store/valkey/README.md), which
-explains the prerequisites (service connection policy, APIs, firewall ports **6379 and
-11000-13047**) and why the published URI ends in `#insecure`.
+explains the prerequisites (service connection policy, the full API list -- note
+`serviceconsumermanagement.googleapis.com`, without which instance creation fails -- and firewall
+ports **6379 and 11000-13047**) and why the published URI ends in `#insecure`.
 
 ### AWS Karpenter Modules
 

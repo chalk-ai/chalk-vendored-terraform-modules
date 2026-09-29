@@ -81,24 +81,21 @@ variable "replica_count" {
 }
 
 variable "node_type" {
-  description = "Machine type for individual nodes. SHARED_CORE_NANO has no SLA and is for development and testing only -- see the README."
+  description = "Machine type for individual nodes. Only the seven types Memorystore offers for Cluster Mode Enabled instances are accepted; the three CUSTOM_* types are Cluster-Mode-Disabled-only and this module always builds a cluster. SHARED_CORE_NANO has no SLA and is for development and testing only -- see the README."
   type        = string
   default     = "STANDARD_SMALL"
 
   validation {
     condition = contains([
       "SHARED_CORE_NANO",
-      "CUSTOM_PICO",
-      "CUSTOM_MICRO",
-      "CUSTOM_MINI",
+      "STANDARD_SMALL",
       "HIGHMEM_MEDIUM",
       "HIGHCPU_MEDIUM",
-      "HIGHMEM_XLARGE",
-      "STANDARD_SMALL",
       "STANDARD_LARGE",
+      "HIGHMEM_XLARGE",
       "HIGHMEM_2XLARGE",
     ], var.node_type)
-    error_message = "node_type must be one of: SHARED_CORE_NANO, CUSTOM_PICO, CUSTOM_MICRO, CUSTOM_MINI, HIGHMEM_MEDIUM, HIGHCPU_MEDIUM, HIGHMEM_XLARGE, STANDARD_SMALL, STANDARD_LARGE, HIGHMEM_2XLARGE. Values are uppercase."
+    error_message = "node_type must be one of: SHARED_CORE_NANO, STANDARD_SMALL, HIGHMEM_MEDIUM, HIGHCPU_MEDIUM, STANDARD_LARGE, HIGHMEM_XLARGE, HIGHMEM_2XLARGE. Values are uppercase. CUSTOM_PICO, CUSTOM_MICRO and CUSTOM_MINI exist in the provider enum but Memorystore offers them for Cluster Mode Disabled instances ONLY -- this module always builds a CLUSTER, so those three pass plan and then fail at apply. Google's Cluster-Mode-Enabled capacity table lists the seven above and no others."
   }
 }
 
@@ -121,6 +118,44 @@ variable "deletion_protection_enabled" {
   description = "Refuse to delete the instance. Defaults to true, which is the opposite of the Memorystore API default: a `terraform destroy` run against a misread plan would otherwise empty the online feature store. Set this to false and apply that change BEFORE attempting to destroy the instance."
   type        = bool
   default     = true
+}
+
+variable "kms_key" {
+  description = <<-EOT
+    Cloud KMS CryptoKey that encrypts the instance's at-rest data -- backups, RDB persistence
+    files and the metadata behind the security features. Leave this null, the default, for
+    Google-managed encryption, which is what most projects want.
+
+    Give the full CryptoKey resource ID:
+    `projects/<project>/locations/<region>/keyRings/<key-ring>/cryptoKeys/<key>`
+
+    The key's `locations/` segment must equal `region`. Google requires the key ring, the key and
+    the instance to share a location and rejects the create request when they differ; a `global`
+    key ring is therefore never usable here, because it can never equal a Memorystore region.
+
+    The key's PROJECT deliberately is not checked. A central KMS project separate from the
+    instance's project is a normal arrangement, and which key projects are permitted is governed
+    by `constraints/gcp.restrictCmekCryptoKeyProjects` -- your policy, not this module's.
+
+    Create-only. CMEK can be enabled only on a NEW instance, and the provider marks the attribute
+    ForceNew, so adding, removing or repointing it REPLACES the instance and discards the cache.
+
+    Mandatory in some organizations: when the Memorystore for Valkey API appears on the deny list
+    of `constraints/gcp.restrictNonCmekServices`, non-CMEK instances cannot be created at all.
+    See the README, "Customer-managed encryption keys".
+  EOT
+  type        = string
+  default     = null
+
+  # Shape only. The region comparison needs `var.region` as well, and cross-variable references
+  # in a `validation` block require Terraform >= 1.9 (they "could refer only to the variable being
+  # validated" before that). This module's floor is >= 1.3, so that check lives in a
+  # `lifecycle.precondition` on the instance instead -- the same split already used for the
+  # service connection policy subnets.
+  validation {
+    condition     = var.kms_key == null || can(regex("^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+$", var.kms_key))
+    error_message = "kms_key must be a full Cloud KMS CryptoKey resource ID of the form projects/<project>/locations/<location>/keyRings/<key-ring>/cryptoKeys/<key>, or null for Google-managed encryption. A key ring name, a bare key name or a key VERSION path will not do."
+  }
 }
 
 variable "labels" {

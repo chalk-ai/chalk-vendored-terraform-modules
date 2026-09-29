@@ -63,8 +63,30 @@ module "chalk_online_store" {
 
 ## Prerequisites
 
-**Enabled APIs** in `project_id`: `memorystore.googleapis.com`,
-`networkconnectivity.googleapis.com`, `secretmanager.googleapis.com`, and `compute.googleapis.com`.
+**Enabled APIs.** Reconciled against Google's own "Before you begin" for creating a Memorystore for
+Valkey instance and for configuring a service connection policy — the first three are Google's list
+verbatim, the last two are what this module additionally needs.
+
+| API | Why | Where |
+|---|---|---|
+| `memorystore.googleapis.com` | The instance. | `project_id` |
+| `networkconnectivity.googleapis.com` | Private Service Connect service connectivity automation. **Without it, instance creation fails.** | the network's project |
+| `serviceconsumermanagement.googleapis.com` | Same automation. **Without it, instance creation fails.** Google asks for it in "the consumer project that Private Service Connect endpoints are deployed in". | the network's project |
+| `compute.googleapis.com` | Required to configure a service connection policy, and to resolve the network. | the network's project |
+| `secretmanager.googleapis.com` | The connection-URI secret this module publishes. | `project_id` |
+| `cloudkms.googleapis.com` | Only when `kms_key` is set. | the key's project |
+
+Under Shared VPC "the network's project" is the host project, not `project_id`. When the two are
+the same, enable everything in the one project.
+
+`serviceconsumermanagement.googleapis.com` is the one most often missed, and its failure mode is
+the instance simply refusing to be created — not a permissions error naming the API.
+
+Two APIs are deliberately **not** on this list. `servicedirectory.googleapis.com` is not named as a
+requirement by either of Google's two "Before you begin" lists. `orgpolicy.googleapis.com` is not
+needed because this module does not read your organization policies: there is no effective-policy
+data source (the v1 one is project/folder-scoped and misses inherited org-level policies), and
+reading it would fail the plan for anyone lacking the permission.
 
 **A Private Service Connect service connection policy.** PSC service connectivity automation is the
 *only* way to reach a Memorystore for Valkey instance, and the policy must exist for the
@@ -176,6 +198,43 @@ and in-transit encryption cannot be deactivated on such an instance.
 `server_ca_mode` first shipped in the `hashicorp/google` provider at **v7.24.0**, which is why this
 module's provider floor is `>= 7.24.0`.
 
+## Customer-managed encryption keys
+
+`kms_key` is optional and defaults to `null`, which leaves the instance on Google-managed
+encryption. Set it to a Cloud KMS CryptoKey resource ID to encrypt the instance's **at-rest** data
+with your own key: backups, RDB persistence files, and the metadata behind the security features.
+In-memory data is not what CMEK covers.
+
+```hcl
+kms_key = "projects/example-kms-project/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
+```
+
+Four things to know before you set it.
+
+**It is create-only.** Google: *"You can enable CMEK only on new instances. You can't apply CMEK to
+existing instances."* The provider marks the attribute `ForceNew`, so adding it, removing it or
+repointing it **replaces the instance** and discards the cache. Decide at creation.
+
+**It is mandatory in some organizations.** `constraints/gcp.restrictNonCmekServices` lists services
+that may not hold non-CMEK data. If the Memorystore for Valkey API is on that deny list, you
+*cannot create a non-CMEK instance at all* — and because the attribute is create-only, a module
+without this input would leave you with no path forward. That is why the input exists despite the
+module's otherwise minimal surface.
+
+**The key must live in the instance's region.** Google requires the key ring, the key and the
+instance to share a location and fails the create request when they do not. The module compares the
+key's `locations/` segment to `region` in a plan-time precondition, so a mismatch is caught before
+anything is built. A `global` key ring can never satisfy this, and is rejected by the same check.
+
+**The key's project is not checked, on purpose.** Holding keys in a separate central KMS project is
+a normal arrangement that Google explicitly supports, and which key projects are permitted is
+governed by `constraints/gcp.restrictCmekCryptoKeyProjects` — your policy, not this module's.
+
+One prerequisite the module cannot do for you: grant
+`roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key to the Memorystore service agent,
+`service-<PROJECT_NUMBER>@gcp-sa-memorystore.iam.gserviceaccount.com`. Without it the instance
+cannot be created.
+
 ## Persistence and backups are different things
 
 | | RDB persistence | Automated backups |
@@ -239,6 +298,14 @@ bigger node.
 **`SHARED_CORE_NANO` has no SLA.** Google documents it as suitable for development and testing only.
 It is accepted by this module's validation, but do not put a production online store on it.
 
+**`CUSTOM_PICO`, `CUSTOM_MICRO` and `CUSTOM_MINI` are rejected.** They exist in the provider's enum,
+so Terraform would happily plan them — but Google offers custom node types *for Cluster Mode
+Disabled instances only*, and they do not appear in the Cluster-Mode-Enabled capacity table. This
+module always builds a cluster, so those three would pass `plan` and fail at `apply`. The validation
+turns that into a plan-time error that names the reason. The seven accepted values are
+`SHARED_CORE_NANO`, `STANDARD_SMALL`, `HIGHMEM_MEDIUM`, `HIGHCPU_MEDIUM`, `STANDARD_LARGE`,
+`HIGHMEM_XLARGE` and `HIGHMEM_2XLARGE`.
+
 `replica_count` must be at least 1. Memorystore itself accepts 0; this module rejects it, because
 the instance is created with `MULTI_ZONE` distribution and with no replica there is no second copy
 to place in another zone — the zone spread buys nothing, and a shard whose only node fails loses its
@@ -271,9 +338,10 @@ against the `google_memorystore_instance` **data source**, which can read the de
 | `instance_id` | `string` | — | **Required.** Instance ID. Immutable. Also derives the secret name. |
 | `shard_count` | `number` | `3` | Number of shards. Must be >= 1. |
 | `replica_count` | `number` | `1` | Replicas per shard. Must be 1–5; 0 is rejected deliberately. |
-| `node_type` | `string` | `STANDARD_SMALL` | One of the ten Memorystore node types, uppercase. |
+| `node_type` | `string` | `STANDARD_SMALL` | One of the **seven** Cluster-Mode-Enabled node types, uppercase. The three `CUSTOM_*` types are rejected — see Sizing. |
 | `engine_version` | `string` | `VALKEY_9_1` | One of `VALKEY_7_2`, `VALKEY_8_0`, `VALKEY_9_0`, `VALKEY_9_1`. |
 | `deletion_protection_enabled` | `bool` | `true` | Refuse to delete the instance. See the warning at the top. |
+| `kms_key` | `string` | `null` | CryptoKey for at-rest encryption. Create-only; must be in `region`. Required under `constraints/gcp.restrictNonCmekServices`. |
 | `labels` | `map(string)` | `{}` | Merged with the module's own labels; the module's win on collision. |
 | `secret_replication_location` | `string` | `null` | Pin the connection-URI secret to one region instead of replicating it automatically. Required under `constraints/gcp.resourceLocations`. Immutable — changing it replaces the secret. |
 | `create_service_connection_policy` | `bool` | `false` | Create the PSC policy. Only one may exist per project/network/region/service class. |
