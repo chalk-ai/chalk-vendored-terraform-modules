@@ -73,8 +73,11 @@ Memorystore supports in-place upgrades, so a suffix would encode a constraint th
 - Cluster mode, multi-zone, encrypted in transit, with `allkeys-lru` eviction
 - RDB persistence **and** daily automated backups with 30-day retention, both enforced
 - One Secret Manager secret holding a Chalk-format connection URI, derived from the instance's
-  actual settings rather than hardcoded
+  actual settings rather than hardcoded, and built from the cluster's **discovery** endpoint
+  rather than whichever endpoint the API happens to list first
 - Optional creation of the Private Service Connect service connection policy the instance requires
+- Optional single-region replication for the secret, for organizations that enforce
+  `constraints/gcp.resourceLocations`
 - `deletion_protection_enabled` defaults to **`true`** -- the opposite of the API default, so a
   misread `terraform destroy` cannot silently empty the online feature store
 
@@ -84,7 +87,7 @@ chosen when the instance is born.
 
 **Key Outputs**:
 - `secret_id`: Secret name to configure in the Chalk dashboard
-- `endpoint_host` / `endpoint_port`: the instance's Private Service Connect endpoint
+- `endpoint_host` / `endpoint_port`: the instance's Private Service Connect discovery endpoint
 
 See [`modules/gcp/online-store/valkey/README.md`](modules/gcp/online-store/valkey/README.md), which
 explains the prerequisites (service connection policy, APIs, firewall ports **6379 and
@@ -188,7 +191,7 @@ output "secret_name" {
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.4.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.3.3"
 
   project_id  = "example-project"
   region      = "us-central1"
@@ -204,7 +207,7 @@ module "chalk_online_store" {
   }
 }
 
-output "secret_name" {
+output "secret_id" {
   value = module.chalk_online_store.secret_id
 }
 ```

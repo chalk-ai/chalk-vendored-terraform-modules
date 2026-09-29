@@ -27,7 +27,7 @@ not harden anything — it breaks every connection.
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.4.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.3.3"
 
   project_id  = "example-project"
   region      = "us-central1"
@@ -44,7 +44,7 @@ Shared VPC — pass a qualified network path and the module works out the host p
 
 ```hcl
 module "chalk_online_store" {
-  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.4.0"
+  source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/gcp/online-store/valkey?ref=v0.3.3"
 
   project_id  = "example-service-project"
   region      = "us-central1"
@@ -76,13 +76,46 @@ one policy may exist per combination.
 - Otherwise set `create_service_connection_policy = true` on **exactly one** module instance for
   that combination and pass `service_connection_policy_subnets`. Do not list proxy-only subnets.
 
+When the module creates the policy it names it `<network>-<region>-memorystore`, after the scope the
+policy actually has. The name deliberately does **not** contain `instance_id`: the policy is shared
+by every Memorystore instance on that network, and naming it after whichever instance happened to
+create it would imply an ownership that does not exist.
+
 Note the regional quota: the PSC connection limit is roughly two connections per instance per
 region, and an unset limit means unlimited.
+
+**Org policy: `constraints/gcp.resourceLocations`.** If your organization enforces it, the default
+automatic replication of the connection-URI secret is **rejected** — "automatic" means every region,
+which a location constraint forbids. Set `secret_replication_location` to a permitted region and the
+secret is created with a single user-managed replica there instead. Leave it unset otherwise.
+Secret Manager does not allow a replication policy to change after creation, so this has to be
+right the first time.
 
 **Firewall.** Clients need egress to the instance on TCP **6379** *and* **11000–13047**. Valkey
 cluster mode uses the second range for the cluster bus and node redirection; allowing only 6379
 produces a cluster that connects and then fails on the first redirect. This module does not manage
 firewall rules.
+
+## Which endpoint the URI carries
+
+A cluster-mode instance publishes **more than one** Private Service Connect connection: a
+**discovery** endpoint, a **primary** (data) endpoint and, with replicas, a **reader** endpoint.
+They are separate elements of `endpoints[].connections`. Google documents the primary endpoint as
+one clients must not connect to directly — only the discovery endpoint is a client entry point.
+
+The module selects it by `connection_type == "CONNECTION_TYPE_DISCOVERY"`, never by list position.
+Position is **uncontracted**: neither the Memorystore REST reference nor the provider schema states
+an order for these connections, so an index relies on something nobody promised. It also looks
+correct for as long as an instance has only one connection, which is exactly how this class of bug
+survives review.
+
+If **no** discovery connection exists — or if **more than one** does, which means endpoints were
+attached out of band — the module **refuses to publish** rather than emitting a URI it guessed at.
+That is deliberate: `rediss://:0/0?clustered=true#insecure` passes Chalk's own URI validation, which
+only insists on `clustered`, so the dashboard would accept it and the fault would surface days later
+as an unexplained connect error. A plan-time precondition failure naming the missing endpoint is
+much cheaper. The usual cause of the zero case is a missing service connection policy, or one whose
+subnets have no free addresses.
 
 ## Encrypted in transit, unverified certificate
 
@@ -147,12 +180,20 @@ module's provider floor is `>= 7.24.0`.
 
 | | RDB persistence | Automated backups |
 |---|---|---|
-| Configured as | `persistence_config`, RDB, every 24 hours | `automated_backup_config`, daily at 09:00 UTC |
+| Configured as | `persistence_config`, RDB, every 24 hours anchored at 16:45 UTC | `automated_backup_config`, daily at 09:00 UTC |
 | Retention | n/a | 30 days (`2592000s`) |
 | Survives instance deletion | **no** | **yes**, for the retention period |
 | Cleanup | automatic | **manual** — backups outlive the instance and must be deleted by hand |
 
 Both are enforced by the module and neither is exposed as an input.
+
+The RDB snapshot time is pinned rather than left to the API. `rdb_snapshot_start_time` is the
+timestamp future snapshots align to, and when it is unset the API substitutes *the moment the
+instance was created* — so the snapshot would land at an arbitrary hour that varies per instance.
+16:45 UTC is the midpoint of the widest gap between the other two scheduled activities on the
+instance, the 09:00 UTC backup and the Sunday 00:30 UTC maintenance window, giving 7h45m of
+clearance from each. The date part of the value is a constant in the past: it is an alignment
+anchor, not a schedule, and a computed timestamp there would produce perpetual plan drift.
 
 A note on how backups are enabled: the provider derives the API's `automatedBackupMode` from whether
 the `automated_backup_config` block is rendered, and it transmits that field on **every** apply.
@@ -226,7 +267,7 @@ against the `google_memorystore_instance` **data source**, which can read the de
 |---|---|---|---|
 | `project_id` | `string` | — | **Required.** Project holding the instance and the secret. |
 | `region` | `string` | — | **Required.** Region for the instance and its service connection policy. |
-| `network` | `string` | — | **Required.** Bare network name, `projects/<p>/global/networks/<n>` path, or self-link. Use a path or self-link for Shared VPC. |
+| `network` | `string` | — | **Required.** Bare network name, `projects/<p>/global/networks/<n>` path, or a self-link in either the `www.googleapis.com` or `compute.googleapis.com` spelling (a trailing slash is tolerated). Use a path or self-link for Shared VPC. |
 | `instance_id` | `string` | — | **Required.** Instance ID. Immutable. Also derives the secret name. |
 | `shard_count` | `number` | `3` | Number of shards. Must be >= 1. |
 | `replica_count` | `number` | `1` | Replicas per shard. Must be 1–5; 0 is rejected deliberately. |
@@ -234,6 +275,7 @@ against the `google_memorystore_instance` **data source**, which can read the de
 | `engine_version` | `string` | `VALKEY_9_1` | One of `VALKEY_7_2`, `VALKEY_8_0`, `VALKEY_9_0`, `VALKEY_9_1`. |
 | `deletion_protection_enabled` | `bool` | `true` | Refuse to delete the instance. See the warning at the top. |
 | `labels` | `map(string)` | `{}` | Merged with the module's own labels; the module's win on collision. |
+| `secret_replication_location` | `string` | `null` | Pin the connection-URI secret to one region instead of replicating it automatically. Required under `constraints/gcp.resourceLocations`. Immutable — changing it replaces the secret. |
 | `create_service_connection_policy` | `bool` | `false` | Create the PSC policy. Only one may exist per project/network/region/service class. |
 | `service_connection_policy_subnets` | `list(string)` | `[]` | Subnets PSC draws endpoint IPs from. Required when the flag above is true. |
 
@@ -244,8 +286,8 @@ against the `google_memorystore_instance` **data source**, which can read the de
 | `secret_id` | **The dashboard value.** Short ID of the connection-URI secret. |
 | `secret_name` | Fully qualified secret name, for IAM bindings. |
 | `instance_id` | Instance ID. |
-| `endpoint_host` | IP of the first PSC auto-created endpoint, or `""`. |
-| `endpoint_port` | Port of the first PSC auto-created endpoint, or `0`. |
+| `endpoint_host` | IP of the PSC **discovery** endpoint — the one clients use. Never the data endpoint. |
+| `endpoint_port` | Port of the PSC discovery endpoint. |
 | `shard_count` | Shards on the instance. |
 | `replica_count` | Replicas per shard. |
 | `node_type` | Node machine type. |

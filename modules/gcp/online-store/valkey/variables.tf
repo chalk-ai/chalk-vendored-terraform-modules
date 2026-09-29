@@ -29,7 +29,9 @@ variable "network" {
     Accepts any of:
       * a bare network name, resolved inside `project_id` -- for example "example-vpc"
       * a `projects/<project>/global/networks/<name>` path
-      * a full self-link
+      * a self-link in either spelling GCP emits, with or without a trailing slash:
+        `https://www.googleapis.com/compute/v1/projects/<project>/global/networks/<name>` or
+        `https://compute.googleapis.com/compute/v1/projects/<project>/global/networks/<name>`
 
     Use a path or a self-link for Shared VPC, where the network lives in a host project separate
     from `project_id`.
@@ -125,6 +127,31 @@ variable "labels" {
   description = "Additional labels applied to the instance, the secret and (when created) the service connection policy. These are merged with the labels the module always sets rather than replacing them; the module's own labels win on a key collision."
   type        = map(string)
   default     = {}
+}
+
+variable "secret_replication_location" {
+  description = <<-EOT
+    Region to pin the connection-URI secret's replication to.
+
+    Leave this null -- the default -- and the secret is created with automatic replication, which
+    is what almost every project wants.
+
+    Set it to a region name, for example "us-central1", when the organization enforces
+    `constraints/gcp.resourceLocations`. That policy rejects automatically replicated secrets
+    outright, because "automatic" means every region; the secret is then created with a single
+    user-managed replica in the region named here. It need not equal `region`, but it must be a
+    location the org policy permits.
+
+    Immutable: Secret Manager does not allow a secret's replication policy to change after
+    creation, so altering this value later replaces the secret.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.secret_replication_location == null || length(trimspace(coalesce(var.secret_replication_location, " "))) > 0
+    error_message = "secret_replication_location must be null or a non-empty region name."
+  }
 }
 
 # ---------------------------------------------------------------------------------------------

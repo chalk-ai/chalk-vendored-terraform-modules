@@ -46,6 +46,46 @@ run "defaults_are_pinned" {
   }
 }
 
+# `location` and `project` are the two arguments whose absence would be invisible: the plan still
+# renders, the instance is simply built somewhere else. Pin them to the variables rather than
+# accepting whatever the provider block happens to default to.
+run "placement_tracks_the_inputs" {
+  command = plan
+
+  variables {
+    project_id = "example-other-project"
+    region     = "europe-west1"
+  }
+
+  assert {
+    condition     = google_memorystore_instance.valkey.location == "europe-west1"
+    error_message = "the instance is no longer created in var.region"
+  }
+  assert {
+    condition     = google_memorystore_instance.valkey.project == "example-other-project"
+    error_message = "the instance is no longer created in var.project_id"
+  }
+  assert {
+    condition     = google_secret_manager_secret.redis_uri.project == "example-other-project"
+    error_message = "the connection-URI secret is no longer created in var.project_id; Chalk would be pointed at a secret in the wrong project"
+  }
+}
+
+run "deletion_protection_can_be_disabled" {
+  command = plan
+
+  variables {
+    deletion_protection_enabled = false
+  }
+
+  # The documented teardown path is: set this to false, APPLY that change, then destroy. If the
+  # module stopped honouring the input, that path would silently stop working.
+  assert {
+    condition     = google_memorystore_instance.valkey.deletion_protection_enabled == false
+    error_message = "deletion_protection_enabled = false is no longer honoured, which makes the documented teardown path impossible"
+  }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Settings the module fixes. Each of these is either immutable in the API or something Chalk
 # cannot consume the alternative of, so a regression here is not recoverable in place.
@@ -92,6 +132,15 @@ run "persistence_and_backups_are_pinned" {
     error_message = "RDB snapshot period changed"
   }
 
+  # The anchor the daily snapshot aligns to. Leaving it unset does not mean "no control" -- it
+  # means the API substitutes the instance's creation time, so the snapshot lands at an arbitrary
+  # hour and its separation from the 09:00 backup and the Sunday 00:30 maintenance window becomes
+  # luck. It must also stay a CONSTANT: a timestamp() call here would re-evaluate every plan.
+  assert {
+    condition     = google_memorystore_instance.valkey.persistence_config[0].rdb_config[0].rdb_snapshot_start_time == "2025-01-01T16:45:00Z"
+    error_message = "the RDB snapshot anchor changed. 16:45 UTC is the midpoint of the widest gap between the 09:00 UTC backup and the SUNDAY 00:30 UTC maintenance window; if it is now unset, the snapshot runs at whatever time of day the instance was created."
+  }
+
   # Rendering the block IS the enablement: the provider derives automatedBackupMode from the
   # block's presence and always transmits the field, so losing this block turns backups off on an
   # existing instance rather than leaving it alone.
@@ -105,15 +154,22 @@ run "persistence_and_backups_are_pinned" {
   }
   assert {
     condition     = google_memorystore_instance.valkey.automated_backup_config[0].fixed_frequency_schedule[0].start_time[0].hours == 9
-    error_message = "backup start hour changed; it must not collide with the Sunday 00:00 UTC maintenance window"
+    error_message = "backup start hour changed; it must not collide with the Sunday 00:30 UTC maintenance window"
   }
   assert {
     condition     = google_memorystore_instance.valkey.maintenance_policy[0].weekly_maintenance_window[0].day == "SUNDAY"
     error_message = "maintenance day changed"
   }
+  # SUNDAY 00:30 UTC is Chalk's preferred window across the internal estate. The minutes are
+  # load-bearing -- 00:00 and 00:30 are different windows, and the RDB anchor above is chosen
+  # relative to this one.
   assert {
     condition     = google_memorystore_instance.valkey.maintenance_policy[0].weekly_maintenance_window[0].start_time[0].hours == 0
     error_message = "maintenance hour changed"
+  }
+  assert {
+    condition     = google_memorystore_instance.valkey.maintenance_policy[0].weekly_maintenance_window[0].start_time[0].minutes == 30
+    error_message = "the maintenance window is no longer at 00:30; Chalk-preferred across the internal estate is SUNDAY 00:30 UTC, not 00:00"
   }
 }
 
@@ -174,6 +230,52 @@ run "network_self_link_is_normalised" {
   assert {
     condition     = google_memorystore_instance.valkey.desired_auto_created_endpoints[0].network == "projects/example-host-project/global/networks/example-shared-vpc"
     error_message = "a self-link is no longer stripped to a resource path"
+  }
+}
+
+# `compute.googleapis.com` is the other spelling GCP emits for a self-link, and it is just as
+# legitimate as `www.googleapis.com`. Stripping only the second prefix left the first intact and
+# produced a malformed network id that the API would reject at apply.
+run "compute_googleapis_self_link_is_normalised" {
+  command = plan
+
+  variables {
+    network = "https://compute.googleapis.com/compute/v1/projects/example-host-project/global/networks/example-shared-vpc"
+  }
+
+  assert {
+    condition     = google_memorystore_instance.valkey.desired_auto_created_endpoints[0].network == "projects/example-host-project/global/networks/example-shared-vpc"
+    error_message = "the compute.googleapis.com self-link spelling is not normalised"
+  }
+  assert {
+    condition     = google_memorystore_instance.valkey.desired_auto_created_endpoints[0].project_id == "example-host-project"
+    error_message = "the host project is not parsed out of a compute.googleapis.com self-link, which breaks Shared VPC"
+  }
+}
+
+run "trailing_slash_on_a_network_path_is_tolerated" {
+  command = plan
+
+  variables {
+    network = "projects/example-host-project/global/networks/example-shared-vpc/"
+  }
+
+  assert {
+    condition     = google_memorystore_instance.valkey.desired_auto_created_endpoints[0].network == "projects/example-host-project/global/networks/example-shared-vpc"
+    error_message = "a trailing slash survives into the network id, producing a value the API rejects"
+  }
+}
+
+run "trailing_whitespace_on_a_bare_network_name_is_tolerated" {
+  command = plan
+
+  variables {
+    network = "  example-vpc  "
+  }
+
+  assert {
+    condition     = google_memorystore_instance.valkey.desired_auto_created_endpoints[0].network == "projects/example-project/global/networks/example-vpc"
+    error_message = "surrounding whitespace survives into the network id"
   }
 }
 
@@ -254,15 +356,77 @@ run "published_uri_is_rediss_clustered_and_insecure" {
 
   assert {
     condition     = output.endpoint_host == "10.0.0.10"
-    error_message = "endpoint_host no longer tracks the first PSC auto-connection"
+    error_message = "endpoint_host no longer tracks the discovery PSC auto-connection"
   }
   assert {
     condition     = output.endpoint_port == 6379
-    error_message = "endpoint_port no longer tracks the first PSC auto-connection"
+    error_message = "endpoint_port no longer tracks the discovery PSC auto-connection"
   }
 }
 
-run "uri_endpoint_lookup_tolerates_no_endpoints" {
+# A CLUSTER-mode instance carries MORE THAN ONE PSC auto-connection: a discovery endpoint and a
+# data (primary) endpoint. The API promises no ordering between them, and Google documents the
+# data endpoint with "don't connect to this endpoint directly", so the endpoint must be selected
+# by `connection_type` and never by list position.
+#
+# The data connection is deliberately listed FIRST here. Every other fixture in this file has
+# exactly one connection, which is what made position-based selection look correct.
+run "discovery_endpoint_is_selected_by_type_not_by_position" {
+  command = apply
+
+  state_key = "two_connections"
+
+  override_resource {
+    target = google_memorystore_instance.valkey
+    values = {
+      endpoints = [
+        {
+          connections = [
+            {
+              psc_auto_connection = [
+                {
+                  connection_type    = "CONNECTION_TYPE_PRIMARY"
+                  forwarding_rule    = "example-forwarding-rule-data"
+                  ip_address         = "10.0.0.20"
+                  network            = "projects/example-project/global/networks/example-vpc"
+                  port               = 6379
+                  project_id         = "example-project"
+                  psc_connection_id  = "111111111111111111"
+                  service_attachment = "example-service-attachment-data"
+                }
+              ]
+            },
+            {
+              psc_auto_connection = [
+                {
+                  connection_type    = "CONNECTION_TYPE_DISCOVERY"
+                  forwarding_rule    = "example-forwarding-rule-discovery"
+                  ip_address         = "10.0.0.10"
+                  network            = "projects/example-project/global/networks/example-vpc"
+                  port               = 6379
+                  project_id         = "example-project"
+                  psc_connection_id  = "000000000000000000"
+                  service_attachment = "example-service-attachment-discovery"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_version.redis_uri.secret_data == "rediss://10.0.0.10:6379/0?clustered=true#insecure"
+    error_message = "the published URI carries an endpoint other than the discovery one. Taking psc_auto_connection[0] publishes the data endpoint whenever the API returns it first, and Google documents that endpoint as one clients must not connect to directly."
+  }
+  assert {
+    condition     = output.endpoint_host == "10.0.0.10"
+    error_message = "endpoint_host is not the discovery endpoint's address"
+  }
+}
+
+run "uri_publication_fails_when_no_endpoint_exists" {
   command = apply
 
   # Its own state. `run` blocks in a file otherwise share one state, and the instance is
@@ -277,14 +441,104 @@ run "uri_endpoint_lookup_tolerates_no_endpoints" {
     }
   }
 
-  assert {
-    condition     = output.endpoint_host == ""
-    error_message = "an instance with no endpoints should yield an empty host, not an index error"
+  # An earlier version of this module tolerated this and published
+  # `rediss://:0/0?clustered=true#insecure`. That is worse than an index error: Chalk's
+  # ValidateRedisURI accepts it, because the only thing it insists on is `clustered`. The
+  # dashboard would take it and the failure would surface much later as an unexplained connect
+  # error. Refusing at plan/apply is the correct behaviour.
+  expect_failures = [google_secret_manager_secret_version.redis_uri]
+}
+
+run "uri_publication_fails_when_only_a_data_endpoint_exists" {
+  command = apply
+
+  state_key = "data_endpoint_only"
+
+  override_resource {
+    target = google_memorystore_instance.valkey
+    values = {
+      endpoints = [
+        {
+          connections = [
+            {
+              psc_auto_connection = [
+                {
+                  connection_type    = "CONNECTION_TYPE_PRIMARY"
+                  forwarding_rule    = "example-forwarding-rule-data"
+                  ip_address         = "10.0.0.20"
+                  network            = "projects/example-project/global/networks/example-vpc"
+                  port               = 6379
+                  project_id         = "example-project"
+                  psc_connection_id  = "111111111111111111"
+                  service_attachment = "example-service-attachment-data"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   }
-  assert {
-    condition     = output.endpoint_port == 0
-    error_message = "an instance with no endpoints should yield port 0, not an index error"
+
+  # Falling back to "whatever connection is present" would publish the data endpoint here, which
+  # Google documents as not to be connected to directly. Fail loudly instead.
+  expect_failures = [google_secret_manager_secret_version.redis_uri]
+}
+
+run "uri_publication_fails_when_several_discovery_endpoints_exist" {
+  command = apply
+
+  state_key = "two_discovery_endpoints"
+
+  # Two auto-created endpoints, one per network. This module configures exactly one, so reaching
+  # this state means endpoints were attached out of band -- and there is then no single URI that
+  # is the right answer. Taking [0] of the filtered set would just move the original guess up a
+  # level, so the module refuses and says so.
+  override_resource {
+    target = google_memorystore_instance.valkey
+    values = {
+      endpoints = [
+        {
+          connections = [
+            {
+              psc_auto_connection = [
+                {
+                  connection_type    = "CONNECTION_TYPE_DISCOVERY"
+                  forwarding_rule    = "example-forwarding-rule-discovery-a"
+                  ip_address         = "10.0.0.10"
+                  network            = "projects/example-project/global/networks/example-vpc"
+                  port               = 6379
+                  project_id         = "example-project"
+                  psc_connection_id  = "000000000000000000"
+                  service_attachment = "example-service-attachment-a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          connections = [
+            {
+              psc_auto_connection = [
+                {
+                  connection_type    = "CONNECTION_TYPE_DISCOVERY"
+                  forwarding_rule    = "example-forwarding-rule-discovery-b"
+                  ip_address         = "10.1.0.10"
+                  network            = "projects/example-project/global/networks/example-other-vpc"
+                  port               = 6379
+                  project_id         = "example-project"
+                  psc_connection_id  = "222222222222222222"
+                  service_attachment = "example-service-attachment-b"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   }
+
+  expect_failures = [google_secret_manager_secret_version.redis_uri]
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -324,9 +578,32 @@ run "service_connection_policy_is_created_on_request" {
     condition     = google_network_connectivity_service_connection_policy.valkey[0].location == "us-central1"
     error_message = "the policy is no longer created in var.region"
   }
+  # The policy is a SINGLETON per (project, network, region, service class), shared by every
+  # Memorystore instance in the VPC. Its name must therefore not carry the instance_id of
+  # whichever module instance happened to create it -- that reads as ownership that does not
+  # exist, and invites a second caller to create a "different" policy the API will reject.
   assert {
-    condition     = output.service_connection_policy_name == "chalk-valkey-test-valkey-scp"
-    error_message = "service connection policy name changed"
+    condition     = output.service_connection_policy_name == "example-vpc-us-central1-memorystore"
+    error_message = "the service connection policy name is no longer derived from the network and region. Do not reintroduce instance_id: the policy is shared by every instance on the network."
+  }
+}
+
+run "service_connection_policy_name_uses_the_bare_network_name_from_a_path" {
+  command = plan
+
+  variables {
+    create_service_connection_policy  = true
+    service_connection_policy_subnets = ["projects/example-host-project/regions/us-central1/subnetworks/example-subnet"]
+    network                           = "projects/example-host-project/global/networks/example-shared-vpc"
+  }
+
+  assert {
+    condition     = output.service_connection_policy_name == "example-shared-vpc-us-central1-memorystore"
+    error_message = "the policy name is not derived from the bare network name when a qualified path is supplied"
+  }
+  assert {
+    condition     = google_network_connectivity_service_connection_policy.valkey[0].project == "example-host-project"
+    error_message = "the policy is no longer created in the network's host project, which breaks Shared VPC"
   }
 }
 
@@ -439,4 +716,66 @@ run "invalid_instance_id_is_rejected" {
   }
 
   expect_failures = [var.instance_id]
+}
+
+# ---------------------------------------------------------------------------------------------
+# Secret replication
+#
+# Automatic replication is the default and is what almost every project wants. It is, however,
+# rejected outright under `constraints/gcp.resourceLocations`, which some organizations enforce --
+# so the location-restricted form has to stay reachable.
+# ---------------------------------------------------------------------------------------------
+
+run "secret_replication_is_automatic_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(google_secret_manager_secret.redis_uri.replication[0].auto) == 1
+    error_message = "the secret is no longer automatically replicated by default"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret.redis_uri.replication[0].user_managed) == 0
+    error_message = "the default replication is no longer purely automatic"
+  }
+}
+
+run "secret_replication_can_be_pinned_to_one_location" {
+  command = plan
+
+  variables {
+    secret_replication_location = "us-central1"
+  }
+
+  assert {
+    condition     = length(google_secret_manager_secret.redis_uri.replication[0].auto) == 0
+    error_message = "automatic replication is still rendered alongside the pinned location; a secret has exactly one replication policy"
+  }
+  assert {
+    condition     = google_secret_manager_secret.redis_uri.replication[0].user_managed[0].replicas[0].location == "us-central1"
+    error_message = "secret_replication_location no longer pins the secret's replica. Organizations enforcing constraints/gcp.resourceLocations cannot hold an automatically replicated secret at all, so losing this capability locks them out of the module."
+  }
+}
+
+run "secret_replication_location_need_not_match_region" {
+  command = plan
+
+  variables {
+    region                      = "us-central1"
+    secret_replication_location = "us-east1"
+  }
+
+  assert {
+    condition     = google_secret_manager_secret.redis_uri.replication[0].user_managed[0].replicas[0].location == "us-east1"
+    error_message = "secret_replication_location is being overridden by region; the permitted secret location need not equal the instance's region"
+  }
+}
+
+run "empty_secret_replication_location_is_rejected" {
+  command = plan
+
+  variables {
+    secret_replication_location = "  "
+  }
+
+  expect_failures = [var.secret_replication_location]
 }

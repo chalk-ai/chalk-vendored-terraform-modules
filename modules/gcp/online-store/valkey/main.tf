@@ -24,14 +24,22 @@
 # ---------------------------------------------------------------------------------------------
 
 locals {
-  secret_id                    = "${var.instance_id}-redis-uri"
-  service_connection_policy_id = "${var.instance_id}-valkey-scp"
+  secret_id = "${var.instance_id}-redis-uri"
 
   # `network` may arrive as a bare name, a resource path, or a full self-link. Normalise to the
   # `projects/<project>/global/networks/<name>` form the Memorystore endpoint argument wants.
-  network_path = replace(var.network, "https://www.googleapis.com/compute/v1/", "")
+  #
+  # Both self-link spellings GCP emits are accepted -- `www.googleapis.com/compute/v1/...` and
+  # `compute.googleapis.com/compute/v1/...` -- along with any API version and a trailing slash,
+  # because all of those are things `gcloud`, the console and other providers hand you. Matching
+  # only one literal prefix silently produced a malformed network id for the others.
+  network_path = replace(
+    trimsuffix(trimspace(var.network), "/"),
+    "/^https?://[^/]+/compute/[^/]+//",
+    "",
+  )
   network_id = startswith(local.network_path, "projects/") ? local.network_path : (
-    "projects/${var.project_id}/global/networks/${var.network}"
+    "projects/${var.project_id}/global/networks/${local.network_path}"
   )
 
   # The PSC forwarding rule is created in the project that owns the network, which is not
@@ -40,6 +48,17 @@ locals {
     regex("^projects/([^/]+)/global/networks/[^/]+$", local.network_id)[0],
     var.project_id
   )
+
+  # Bare network name, whatever spelling arrived. Used to name the service connection policy.
+  network_name = regex("[^/]+$", local.network_id)
+
+  # The service connection policy is a SINGLETON per (project, network, region, service class) --
+  # every Memorystore instance in the VPC shares the one policy. Naming it after `instance_id`
+  # therefore named a shared resource after whichever instance happened to create it, which reads
+  # as ownership that does not exist. Name it after its actual scope instead: the project is the
+  # resource's own project and the region is its `location`, so network plus service class is what
+  # remains to disambiguate.
+  service_connection_policy_id = "${local.network_name}-${var.region}-memorystore"
 
   # Module-owned labels. Merged under the caller's so that a caller supplying `labels` adds to
   # them rather than replacing them, and so the identifying pair always survives.
@@ -91,11 +110,24 @@ locals {
   # block does not leave an existing instance alone, it sends DISABLED and turns backups off.
   #
   # 30 days, inside the documented 1-365 day range and below the provider's own 35-day default.
-  # 09:00 UTC keeps the backup away from the Sunday 00:00 UTC maintenance window; the
-  # TWENTY_FOUR_HOURS RDB period gives no start-time control, so hour-of-day is the only
-  # separation available.
   backup_retention_seconds = "2592000s"
   backup_start_hour_utc    = 9
+
+  # The RDB snapshot anchor. `rdb_snapshot_start_time` is the timestamp "the first snapshot
+  # was/will be attempted, and to which future snapshots will be aligned", so with a
+  # TWENTY_FOUR_HOURS period it fixes the daily snapshot at this time of day. Leaving it unset
+  # does NOT mean "no control" -- it means the API substitutes the moment of creation, so the
+  # snapshot lands at whatever time of day the instance happened to be built.
+  #
+  # 16:45 UTC is the midpoint of the widest gap between the two other scheduled activities on the
+  # instance: the 09:00 UTC backup and the SUNDAY 00:30 UTC maintenance window. That is 7h45m of
+  # clearance from each.
+  #
+  # The date component must be a CONSTANT. It is deliberately in the past -- an anchor, not a
+  # schedule -- because a `timestamp()` call would re-evaluate on every plan and produce
+  # perpetual drift on a field that is Optional+Computed. RFC 3339, UTC, per the provider's own
+  # documented examples.
+  rdb_snapshot_start_time = "2025-01-01T16:45:00Z"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -121,6 +153,13 @@ resource "google_network_connectivity_service_connection_policy" "valkey" {
     precondition {
       condition     = length(var.service_connection_policy_subnets) > 0
       error_message = "service_connection_policy_subnets must list at least one subnetwork when create_service_connection_policy is true. Private Service Connect draws the instance's endpoint IP addresses from these subnets."
+    }
+
+    # The name is derived from the network name and the region, either of which can be long.
+    # Catch an over-long name at plan time rather than as an opaque API rejection at apply.
+    precondition {
+      condition     = length(local.service_connection_policy_id) <= 63
+      error_message = "The derived service connection policy name (<network>-<region>-memorystore) exceeds the 63-character limit GCP allows. Either shorten the network name, or create the policy outside this module and leave create_service_connection_policy at false."
     }
   }
 }
@@ -165,7 +204,8 @@ resource "google_memorystore_instance" "valkey" {
   persistence_config {
     mode = "RDB"
     rdb_config {
-      rdb_snapshot_period = "TWENTY_FOUR_HOURS"
+      rdb_snapshot_period     = "TWENTY_FOUR_HOURS"
+      rdb_snapshot_start_time = local.rdb_snapshot_start_time
     }
   }
 
@@ -184,7 +224,8 @@ resource "google_memorystore_instance" "valkey" {
     weekly_maintenance_window {
       day = "SUNDAY"
       start_time {
-        hours = 0
+        hours   = 0
+        minutes = 30
       }
     }
   }
@@ -220,16 +261,36 @@ locals {
   tls_verification_supported = false
   uri_fragment               = local.tls_verification_supported ? "" : "#insecure"
 
-  # Guard the endpoint lists rather than indexing blind: a multi-VPC instance carries several
-  # endpoints, and the lists are empty until the instance exists.
-  psc_auto_connections = flatten([
-    for endpoint in google_memorystore_instance.valkey.endpoints : [
-      for connection in endpoint.connections : connection.psc_auto_connection
-    ]
+  # A CLUSTER-mode instance publishes SEVERAL PSC connections: a discovery endpoint, a primary
+  # (data) endpoint, and with replicas a reader endpoint. They are separate elements of
+  # `endpoints[].connections` -- the provider declares `endpoints` and `connections` as unbounded
+  # TypeLists and the `psc_auto_connection` inside each connection as MaxItems:1, so the index
+  # that matters is the one over `connections`, and `psc_auto_connection[0]` is inert.
+  #
+  # Only the discovery endpoint is a client entry point. Google documents the primary endpoint as
+  # one clients must not connect to directly, and the provider's own deprecation note on
+  # `discovery_endpoints` sends callers to `connectionType == CONNECTION_TYPE_DISCOVERY`.
+  #
+  # Position is UNCONTRACTED: neither the REST reference nor the provider schema states an order
+  # for these connections. Selecting by index relies on something nobody promised, which is
+  # reason enough not to do it. Select on the type.
+  instance_connections = flatten([
+    for endpoint in google_memorystore_instance.valkey.endpoints : endpoint.connections
   ])
 
-  endpoint_host = length(local.psc_auto_connections) > 0 ? local.psc_auto_connections[0].ip_address : ""
-  endpoint_port = length(local.psc_auto_connections) > 0 ? local.psc_auto_connections[0].port : 0
+  discovery_connections = [
+    for connection in local.instance_connections : connection.psc_auto_connection[0]
+    if try(connection.psc_auto_connection[0].connection_type, null) == "CONNECTION_TYPE_DISCOVERY"
+  ]
+
+  # Exactly one is expected: this module configures exactly one auto-created endpoint, on one
+  # network. Zero and more-than-one are both refused by the preconditions below rather than
+  # resolved with an index, which would only move the same guess up one level.
+  #
+  # The fallbacks here exist because these locals are evaluated during plan, when the lists are
+  # still empty. They are not a tolerated outcome.
+  endpoint_host = length(local.discovery_connections) == 1 ? local.discovery_connections[0].ip_address : ""
+  endpoint_port = length(local.discovery_connections) == 1 ? local.discovery_connections[0].port : 0
 
   # The `/0` database path is emitted explicitly. The Rust client defaults an empty path to /0,
   # but relying on that default is a needless dependency on one implementation's behaviour.
@@ -241,12 +302,60 @@ resource "google_secret_manager_secret" "redis_uri" {
   secret_id = local.secret_id
   labels    = local.labels
 
-  replication {
-    auto {}
+  # Automatic replication is what almost every project wants, and it is the default here.
+  #
+  # It is, however, REJECTED outright under `constraints/gcp.resourceLocations`: an organization
+  # that restricts resource locations cannot hold an automatically replicated secret, because
+  # "automatic" means "every region". Such an organization must pin the secret to a permitted
+  # region instead. Setting `secret_replication_location` switches to that form.
+  dynamic "replication" {
+    for_each = var.secret_replication_location == null ? [1] : []
+    content {
+      auto {}
+    }
+  }
+
+  dynamic "replication" {
+    for_each = var.secret_replication_location == null ? [] : [1]
+    content {
+      user_managed {
+        replicas {
+          location = var.secret_replication_location
+        }
+      }
+    }
   }
 }
 
 resource "google_secret_manager_secret_version" "redis_uri" {
   secret      = google_secret_manager_secret.redis_uri.id
   secret_data = local.redis_uri
+
+  lifecycle {
+    # Refuse to publish a URI that has no endpoint in it.
+    #
+    # Without these, an instance that exposes no discovery connection publishes
+    # `rediss://:0/0?clustered=true#insecure` -- which is WORSE than an index error, because
+    # Chalk's own ValidateRedisURI accepts it (it only insists on `clustered`). The failure then
+    # surfaces days later as an unexplained connect error against a store nobody suspects, with
+    # nothing in the Terraform history to point at.
+    precondition {
+      condition     = length(local.discovery_connections) > 0
+      error_message = "The Memorystore instance exposes no Private Service Connect connection of type CONNECTION_TYPE_DISCOVERY, so there is no endpoint to publish. This normally means the service connection policy for this (project, network, region, gcp-memorystore) combination is missing or has no free addresses in its subnets -- see the README, \"Prerequisites\"."
+    }
+
+    # More than one is not resolved by taking an index; that is the same guess one level up.
+    precondition {
+      condition     = length(local.discovery_connections) < 2
+      error_message = "The Memorystore instance exposes more than one CONNECTION_TYPE_DISCOVERY connection, so there is no single endpoint to publish. This module configures exactly one auto-created endpoint, so this means endpoints were attached out of band. Decide which network Chalk should reach the store on and publish that URI yourself."
+    }
+
+    # `port` is part of a mutually exclusive group in the Memorystore REST schema, so a response
+    # can legitimately omit it -- and the provider's flattener renders a missing port as 0 rather
+    # than as an error.
+    precondition {
+      condition     = local.endpoint_host != "" && local.endpoint_port != 0
+      error_message = "Refusing to publish a connection URI with an empty host or a zero port. A malformed URI of this shape still passes Chalk's URI validation, so it would be accepted by the dashboard and then fail at connect time with no indication of the cause."
+    }
+  }
 }

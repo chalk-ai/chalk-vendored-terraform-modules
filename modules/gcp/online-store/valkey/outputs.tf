@@ -14,12 +14,12 @@ output "instance_id" {
 }
 
 output "endpoint_host" {
-  description = "IP address of the instance's first Private Service Connect auto-created endpoint, or an empty string if none has been created yet."
+  description = "IP address of the instance's Private Service Connect DISCOVERY endpoint -- the one clients connect to. A cluster-mode instance also exposes a data endpoint, which Google documents as not to be connected to directly; this output never returns it. The module refuses to publish a connection URI when no discovery endpoint exists, so an empty string here is only ever seen mid-plan."
   value       = local.endpoint_host
 }
 
 output "endpoint_port" {
-  description = "Port of the instance's first Private Service Connect auto-created endpoint, or 0 if none has been created yet."
+  description = "Port of the instance's Private Service Connect discovery endpoint. See endpoint_host."
   value       = local.endpoint_port
 }
 
