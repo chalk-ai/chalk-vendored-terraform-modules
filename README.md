@@ -229,6 +229,10 @@ Modules are consumed by git tag. **Always pin `?ref=<tag>`** — never `?ref=mai
 |-----|-------|
 | `v0.1.0` | Last release containing `modules/aws/online-store/valkey` |
 | `v0.2.0` | Removed `modules/aws/online-store/valkey` in favour of `valkey8` / `valkey9` |
+| `v0.3.0` | Added `modules/aws/karpenter/chalk-standard-nodepools` |
+| `v0.3.1` | DynamoDB: `deletion_protection_enabled` is configurable |
+| `v0.3.2` | AWS Valkey 9: configurable `transit_encryption_mode` and operation timeouts |
+| `v0.3.3` | Added `modules/gcp/online-store/valkey9` — first GCP module |
 
 ## Migrating from the `valkey` module
 
