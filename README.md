@@ -80,8 +80,9 @@ consumer's instance on their next apply. A suffixed path means a future engine d
   actual settings rather than hardcoded, and built from the cluster's **discovery** endpoint
   rather than whichever endpoint the API happens to list first
 - Optional creation of the Private Service Connect service connection policy the instance requires
-- Optional single-region replication for the secret, for organizations that enforce
-  `constraints/gcp.resourceLocations`
+- Optional `strict_location`, which confines everything to `region` -- in practice just the
+  secret, since every other resource is already regional; for organizations that enforce
+  `constraints/gcp.resourceLocations` or have a data-residency obligation
 - Optional CMEK (`kms_key`) with a plan-time region-colocation check, for organizations that
   enforce `constraints/gcp.restrictNonCmekServices` -- where a non-CMEK instance cannot be
   created at all, and the attribute is create-only

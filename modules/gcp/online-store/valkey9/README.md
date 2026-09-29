@@ -112,12 +112,8 @@ create it would imply an ownership that does not exist.
 Note the regional quota: the PSC connection limit is roughly two connections per instance per
 region, and an unset limit means unlimited.
 
-**Org policy: `constraints/gcp.resourceLocations`.** If your organization enforces it, the default
-automatic replication of the connection-URI secret is **rejected** — "automatic" means every region,
-which a location constraint forbids. Set `secret_replication_location` to a permitted region and the
-secret is created with a single user-managed replica there instead. Leave it unset otherwise.
-Secret Manager does not allow a replication policy to change after creation, so this has to be
-right the first time.
+**Org policy: `constraints/gcp.resourceLocations`.** If your organization enforces it, set
+`strict_location = true` — see [Data residency](#data-residency). Leave it at `false` otherwise.
 
 **Firewall.** Clients need egress to the instance on TCP **6379** *and* **11000–13047**. Valkey
 cluster mode uses the second range for the cluster bus and node redirection; allowing only 6379
@@ -240,6 +236,36 @@ One prerequisite the module cannot do for you: grant
 `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key to the Memorystore service agent,
 `service-<PROJECT_NUMBER>@gcp-sa-memorystore.iam.gserviceaccount.com`. Without it the instance
 cannot be created.
+
+## Data residency
+
+If your data must stay inside one region, set `strict_location = true`. It is a bool, and the
+region it uses is `region` — there is no second location input, so the two cannot disagree.
+
+The useful part is how little it has to change. Everything this module creates is **already**
+confined to `region`:
+
+| Resource | How it is confined |
+|---|---|
+| The Memorystore instance | Created with `location = region`. |
+| The service connection policy | Created with `location = region`. |
+| Automated backups | Regional by construction. The backup collection is addressed by the instance's own region and is not an input, so a backup has no way to leave it. |
+| The CMEK key, if you set `kms_key` | Already required to be in `region`, and checked at plan time. |
+| **The connection-URI secret** | **The exception.** Secret Manager's default replication is *automatic*, which means every region. |
+
+So the flag exists for exactly one resource — the secret — and does one thing: replaces automatic
+replication with a single user-managed replica in `region`. That is also the form
+`constraints/gcp.resourceLocations` requires, since it rejects an automatically replicated secret
+outright.
+
+Secret Manager does not allow a replication policy to change after the secret is created, so
+flipping this later replaces the secret. Decide at creation.
+
+**It does not make the instance single-zone, and it should not.** The instance stays `MULTI_ZONE`,
+which spreads nodes across zones *within* `region`. That satisfies a regional residency requirement
+while keeping in-region high availability — single-region and single-zone are different
+requirements, and collapsing them would cost you a zone's worth of redundancy for no residency
+benefit.
 
 ## Persistence and backups are different things
 
@@ -381,7 +407,7 @@ against the `google_memorystore_instance` **data source**, which can read the de
 | `deletion_protection_enabled` | `bool` | `true` | Refuse to delete the instance. See the warning at the top. |
 | `kms_key` | `string` | `null` | CryptoKey for at-rest encryption. Create-only; must be in `region`. Required under `constraints/gcp.restrictNonCmekServices`. |
 | `labels` | `map(string)` | `{}` | Merged with the module's own labels; the module's win on collision. |
-| `secret_replication_location` | `string` | `null` | Pin the connection-URI secret to one region instead of replicating it automatically. Required under `constraints/gcp.resourceLocations`. Immutable — changing it replaces the secret. |
+| `strict_location` | `bool` | `false` | Confine everything to `region` by pinning the secret's replication there. Required under `constraints/gcp.resourceLocations`. Immutable — changing it replaces the secret. |
 | `create_service_connection_policy` | `bool` | `false` | Create the PSC policy. Only one may exist per project/network/region/service class. |
 | `service_connection_policy_subnets` | `list(string)` | `[]` | Subnets PSC draws endpoint IPs from. Required when the flag above is true. |
 

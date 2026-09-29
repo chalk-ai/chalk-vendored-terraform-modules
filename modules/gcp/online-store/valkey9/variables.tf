@@ -164,34 +164,34 @@ variable "labels" {
   default     = {}
 }
 
-variable "secret_replication_location" {
+variable "strict_location" {
   description = <<-EOT
-    Region to pin the connection-URI secret's replication to.
+    Confine everything this module creates to `region`.
 
-    Leave this null -- the default -- and the secret is created with automatic replication, which
-    is what almost every project wants.
+    Exactly one resource is affected, because everything else is already regional by
+    construction: the connection-URI secret. Secret Manager replicates a secret to EVERY region by
+    default, which makes it the only thing here that leaves the region boundary.
 
-    Set it to a region name, for example "us-central1", when the organization enforces
-    `constraints/gcp.resourceLocations`. That policy rejects automatically replicated secrets
-    outright, because "automatic" means every region; the secret is then created with a single
-    user-managed replica in the region named here. It need not equal `region`, but it must be a
-    location the org policy permits.
+    false -- the default -- gives the secret automatic replication, which is what most projects
+    want.
+
+    true creates the secret with a single user-managed replica in `region` instead. Set it when
+    the organization enforces `constraints/gcp.resourceLocations`, which rejects an automatically
+    replicated secret outright, or when a data-residency obligation requires it.
+
+    The replica location is `region` by construction; there is no separate input for it, so the
+    two cannot disagree.
 
     Immutable: Secret Manager does not allow a secret's replication policy to change after
-    creation, so altering this value later replaces the secret.
+    creation, so flipping this value replaces the secret.
+
+    This does NOT change zone distribution. The instance stays MULTI_ZONE, which spreads nodes
+    across zones WITHIN `region` -- that satisfies a regional residency requirement and keeps
+    in-region high availability. Single-region and single-zone are different requirements.
   EOT
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.secret_replication_location == null || length(trimspace(coalesce(var.secret_replication_location, " "))) > 0
-    error_message = "secret_replication_location must be null or a non-empty region name."
-  }
+  type        = bool
+  default     = false
 }
-
-# ---------------------------------------------------------------------------------------------
-# Optional: Private Service Connect service connection policy
-# ---------------------------------------------------------------------------------------------
 
 variable "create_service_connection_policy" {
   description = <<-EOT

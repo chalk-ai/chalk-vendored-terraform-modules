@@ -336,25 +336,28 @@ resource "google_secret_manager_secret" "redis_uri" {
   secret_id = local.secret_id
   labels    = local.labels
 
-  # Automatic replication is what almost every project wants, and it is the default here.
+  # This secret is the ONLY resource in the module that is not already confined to `var.region`:
+  # Secret Manager's automatic replication means every region. Everything else here -- the
+  # instance, the service connection policy, the backups and the CMEK key -- is regional by
+  # construction or already checked against `var.region`.
   #
-  # It is, however, REJECTED outright under `constraints/gcp.resourceLocations`: an organization
-  # that restricts resource locations cannot hold an automatically replicated secret, because
-  # "automatic" means "every region". Such an organization must pin the secret to a permitted
-  # region instead. Setting `secret_replication_location` switches to that form.
+  # Automatic replication is what most projects want and is the default. It is, however, REJECTED
+  # outright under `constraints/gcp.resourceLocations`, since an organization that restricts
+  # resource locations cannot hold a secret replicated everywhere. `strict_location` pins it to
+  # `var.region` instead.
   dynamic "replication" {
-    for_each = var.secret_replication_location == null ? [1] : []
+    for_each = var.strict_location ? [] : [1]
     content {
       auto {}
     }
   }
 
   dynamic "replication" {
-    for_each = var.secret_replication_location == null ? [] : [1]
+    for_each = var.strict_location ? [1] : []
     content {
       user_managed {
         replicas {
-          location = var.secret_replication_location
+          location = var.region
         }
       }
     }
