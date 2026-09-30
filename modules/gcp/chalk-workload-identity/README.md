@@ -1,9 +1,10 @@
 # GCP Chalk workload identity
 
 Creates a Workload Identity Pool, a Chalk OIDC provider, and a service account.
-Only tokens whose `sub` claim is exactly `env:<environment_id>` are accepted by
-the provider and allowed to impersonate the service account. The OIDC audience
-must match this module's `audience` output.
+Only tokens whose `environment_id` claim matches this module's environment are
+accepted by the provider and allowed to impersonate the service account. The
+token's `sub` combines the environment, caller type, and caller ID. The OIDC
+audience must match this module's `audience` output.
 
 ```hcl
 module "chalk_workload_identity" {

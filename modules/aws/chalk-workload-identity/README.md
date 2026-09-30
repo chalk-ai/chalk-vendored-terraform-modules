@@ -1,9 +1,10 @@
 # AWS Chalk workload identity
 
 Creates an IAM OIDC provider for the Chalk issuer and an IAM role that trusts
-only tokens with `aud = sts.amazonaws.com` and
-`sub = env:<environment_id>`. The role has no permissions until you attach
-application-specific policies.
+only tokens with `aud = sts.amazonaws.com` and a subject beginning with
+`v1:env:<environment_id>:`. Chalk constructs the subject from the authenticated
+environment and caller, for example `v1:env:chlk618429b5:service-token:<id>`.
+The role has no permissions until you attach application-specific policies.
 
 ```hcl
 module "chalk_workload_identity" {
@@ -24,7 +25,8 @@ Set `issuer_url` to the exact `iss` claim from a Chalk workload identity token;
 the example in `chalk-cloud-cost` uses `https://api.staging.chalk.ai`.
 An AWS account can have only one OIDC provider for a given issuer URL. Create
 this module once per issuer per account; additional environment-specific roles
-can trust the resulting `oidc_provider_arn` with their own exact `sub` condition.
+can trust the resulting `oidc_provider_arn` with their own environment-scoped
+`sub` condition.
 
 Enable Chalk identity on the scaling group's container spec. Inside the
 workload, request a short-lived federation token with

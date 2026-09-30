@@ -1,6 +1,6 @@
 locals {
   issuer_host_path = trimprefix(var.issuer_url, "https://")
-  subject          = "env:${var.environment_id}"
+  subject_pattern  = "v1:env:${var.environment_id}:*"
 }
 
 resource "aws_iam_openid_connect_provider" "chalk" {
@@ -25,9 +25,9 @@ data "aws_iam_policy_document" "chalk_assume_role" {
     }
 
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "${local.issuer_host_path}:sub"
-      values   = [local.subject]
+      values   = [local.subject_pattern]
     }
   }
 }

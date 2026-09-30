@@ -3,7 +3,6 @@ data "google_project" "current" {
 }
 
 locals {
-  subject  = "env:${var.environment_id}"
   audience = "https://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.pool_id}/providers/${var.provider_id}"
 }
 
@@ -20,9 +19,10 @@ resource "google_iam_workload_identity_pool_provider" "chalk" {
   display_name                       = "Chalk OIDC"
 
   attribute_mapping = {
-    "google.subject" = "assertion.sub"
+    "google.subject"           = "assertion.sub"
+    "attribute.environment_id" = "assertion.environment_id"
   }
-  attribute_condition = "assertion.sub == ${jsonencode(local.subject)}"
+  attribute_condition = "assertion.environment_id == ${jsonencode(var.environment_id)}"
 
   oidc {
     issuer_uri        = var.issuer_url
@@ -39,7 +39,7 @@ resource "google_service_account" "chalk" {
 resource "google_service_account_iam_member" "chalk" {
   service_account_id = google_service_account.chalk.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.chalk.workload_identity_pool_id}/subject/${local.subject}"
+  member             = "principalSet://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.chalk.workload_identity_pool_id}/attribute.environment_id/${var.environment_id}"
 
   depends_on = [google_iam_workload_identity_pool_provider.chalk]
 }
