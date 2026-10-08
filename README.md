@@ -10,6 +10,11 @@ Self-contained modules for deploying infrastructure components used by Chalk. Ea
 
 ### AWS IAM Modules
 
+#### Chalk Workload Identity (`modules/aws/chalk-workload-identity`)
+
+Creates a Chalk OIDC provider and an IAM role trusted only by a selected Chalk
+environment. See [module documentation](modules/aws/chalk-workload-identity/README.md).
+
 #### Chalk Management Role (`modules/aws/chalk-management-role`)
 
 Creates the cross-account IAM role Chalk uses to deploy and manage customer-cloud infrastructure. It supports broad initial-deployment permissions and a flag that switches the role to restricted ongoing-management permissions without replacing the role.
@@ -57,6 +62,14 @@ defaults, same outputs — kept only so that existing Valkey 8 clusters have a s
 features will be added. Use `valkey9` for new clusters.
 
 See [`modules/aws/online-store/valkey8/README.md`](modules/aws/online-store/valkey8/README.md).
+
+### GCP IAM Modules
+
+#### Chalk Workload Identity (`modules/gcp/chalk-workload-identity`)
+
+Creates a Workload Identity Pool, Chalk OIDC provider, and service account
+trusted only by a selected Chalk environment. See
+[module documentation](modules/gcp/chalk-workload-identity/README.md).
 
 ### GCP Online Store Modules
 
