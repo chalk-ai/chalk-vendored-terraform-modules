@@ -1,10 +1,8 @@
 # AWS Chalk workload identity
 
-Creates an IAM OIDC provider for the Chalk issuer and an IAM role that trusts
-only tokens with `aud = sts.amazonaws.com` and a subject beginning with
-`v1:env:<environment_id>:`. Chalk constructs the subject from the authenticated
-environment and caller, for example `v1:env:chlk618429b5:service-token:<id>`.
-The role has no permissions until you attach application-specific policies.
+Creates a Chalk OIDC provider and an IAM role for one environment. The role
+trusts tokens with `aud = sts.amazonaws.com` and
+`sub = v1:env:<environment_id>:*`. Attach application permissions separately.
 
 ```hcl
 module "chalk_workload_identity" {
@@ -14,35 +12,13 @@ module "chalk_workload_identity" {
   environment_id = "chlk618429b5"
   role_name      = "chalk-chlk618429b5"
 }
-
-resource "aws_iam_role_policy_attachment" "chalk_read_only" {
-  role       = module.chalk_workload_identity.role_name
-  policy_arn = aws_iam_policy.read_only.arn
-}
 ```
 
-Set `issuer_url` to the exact `iss` claim from a Chalk workload identity token;
-the example in `chalk-cloud-cost` uses `https://api.staging.chalk.ai`.
-An AWS account can have only one OIDC provider for a given issuer URL. Create
-this module once per issuer per account; additional environment-specific roles
-can trust the resulting `oidc_provider_arn` with their own environment-scoped
-`sub` condition.
+Use the token's exact `iss` claim for `issuer_url`. AWS allows one OIDC provider
+per issuer URL in an account; reuse its ARN for other environment-scoped roles.
 
-Enable Chalk identity on the scaling group's container spec. Inside the
-workload, request a short-lived federation token with
-`chalkcompute.ConnectClient().get_workload_identity_token("sts.amazonaws.com")`, then pass
-it to AWS STS `AssumeRoleWithWebIdentity` for `role_arn`. The injected
-`CHALK_WEB_IDENTITY_TOKEN_FILE` is a Chalk API credential; it is not the
-audience-specific token to send directly to AWS.
-The current high-level `chalkcompute.ScalingGroup` constructor does not expose
-the identity flag; set `container_spec.chalk_workload_identity` through the
-scaling group API when deploying.
-
-## Outputs
-
-| Name | Description |
-|---|---|
-| `role_arn` | Role to grant AWS permissions. |
-| `role_name` | Role name for IAM policy attachments. |
-| `oidc_provider_arn` | Chalk OIDC provider ARN. |
-| `audience` | Audience to request from Chalk. |
+Enable `container_spec.chalk_workload_identity` on the scaling group. In the
+workload, call `chalkcompute.ConnectClient().get_workload_identity_token("sts.amazonaws.com")`
+and pass that token to STS `AssumeRoleWithWebIdentity` for `role_arn`. The
+injected `CHALK_WEB_IDENTITY_TOKEN_FILE` is a Chalk API credential, not the
+audience-specific AWS token.

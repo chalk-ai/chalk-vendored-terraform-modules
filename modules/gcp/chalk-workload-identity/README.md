@@ -1,10 +1,8 @@
 # GCP Chalk workload identity
 
-Creates a Workload Identity Pool, a Chalk OIDC provider, and a service account.
-Only tokens whose `environment_id` claim matches this module's environment are
-accepted by the provider and allowed to impersonate the service account. The
-token's `sub` combines the environment, caller type, and caller ID. The OIDC
-audience must match this module's `audience` output.
+Creates a Workload Identity Pool, Chalk OIDC provider, and service account for
+one environment. The provider checks the signed `environment_id` claim; the
+service account has no application permissions until you grant them.
 
 ```hcl
 module "chalk_workload_identity" {
@@ -18,30 +16,13 @@ module "chalk_workload_identity" {
 }
 ```
 
-Set `issuer_url` to the exact `iss` claim from a Chalk workload identity token;
-the example in `chalk-cloud-cost` uses `https://api.staging.chalk.ai`. The
-Workload Identity Federation and IAM Credentials APIs must be enabled in the
-project. Grant the service account only the GCP permissions the workload needs;
-this module grants it no project roles.
+Use the token's exact `iss` claim for `issuer_url`, enable Google's Workload
+Identity Federation and IAM Credentials APIs, and use distinct pool and service
+account IDs per environment.
 
-Enable Chalk identity on the scaling group's container spec. Inside the
-workload, request a short-lived federation token with
-`chalkcompute.ConnectClient().get_workload_identity_token(audience)` using the `audience`
-output, and use that token with Google Workload Identity Federation to
+Enable `container_spec.chalk_workload_identity` on the scaling group. In the
+workload, call `chalkcompute.ConnectClient().get_workload_identity_token(audience)`
+using the module's `audience` output. Exchange that token with Google WIF to
 impersonate `service_account_email`. The injected
-`CHALK_WEB_IDENTITY_TOKEN_FILE` is a Chalk API credential; it is not the
-audience-specific token to send directly to Google.
-
-The pool is dedicated to one environment. Use distinct `pool_id` and
-`service_account_id` values for each environment in the same project.
-The current high-level `chalkcompute.ScalingGroup` constructor does not expose
-the identity flag; set `container_spec.chalk_workload_identity` through the
-scaling group API when deploying.
-
-## Outputs
-
-| Name | Description |
-|---|---|
-| `service_account_email` | Service account to grant GCP permissions. |
-| `provider_name` | Fully qualified OIDC provider name. |
-| `audience` | Audience to request from Chalk. |
+`CHALK_WEB_IDENTITY_TOKEN_FILE` is a Chalk API credential, not the
+audience-specific Google token.
