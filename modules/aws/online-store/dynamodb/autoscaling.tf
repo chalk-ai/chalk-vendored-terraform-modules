@@ -1,3 +1,15 @@
+variable "read_policy_name" {
+  description = "Existing or custom read scaling policy name. Null preserves the module's generated name."
+  type        = string
+  default     = null
+}
+
+variable "write_policy_name" {
+  description = "Existing or custom write scaling policy name. Null preserves the module's generated name."
+  type        = string
+  default     = null
+}
+
 resource "aws_appautoscaling_target" "table_read" {
   count = var.autoscaling_enabled && length(var.autoscaling_read) > 0 ? 1 : 0
 
@@ -21,7 +33,7 @@ variable "autoscaling_defaults" {
 resource "aws_appautoscaling_policy" "table_read_policy" {
   count = var.autoscaling_enabled && length(var.autoscaling_read) > 0 ? 1 : 0
 
-  name               = "DynamoDBReadCapacityUtilization:${aws_appautoscaling_target.table_read[0].resource_id}"
+  name               = coalesce(var.read_policy_name, "DynamoDBReadCapacityUtilization:${aws_appautoscaling_target.table_read[0].resource_id}")
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.table_read[0].resource_id
   scalable_dimension = aws_appautoscaling_target.table_read[0].scalable_dimension
@@ -54,7 +66,7 @@ variable "autoscaling_enabled" {
 resource "aws_appautoscaling_policy" "table_write_policy" {
   count = var.autoscaling_enabled && length(var.autoscaling_write) > 0 ? 1 : 0
 
-  name               = "DynamoDBWriteCapacityUtilization:${aws_appautoscaling_target.table_write[0].resource_id}"
+  name               = coalesce(var.write_policy_name, "DynamoDBWriteCapacityUtilization:${aws_appautoscaling_target.table_write[0].resource_id}")
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.table_write[0].resource_id
   scalable_dimension = aws_appautoscaling_target.table_write[0].scalable_dimension
