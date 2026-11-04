@@ -29,6 +29,7 @@ module "chalk_online_store" {
 module "chalk_online_store" {
   source = "git::https://github.com/chalk-ai/chalk-vendored-terraform-modules.git//modules/aws/online-store/dynamodb?ref=main"
 
+  autoscaling_enabled = true
   table_name     = "chalk_online_store"
   billing_mode   = "PROVISIONED"
   read_capacity  = 10
@@ -50,14 +51,34 @@ module "chalk_online_store" {
 
 ## Inputs
 
+### Adopting existing resources
+
+When importing an existing store, set `secret_name`, `read_policy_name`,
+`write_policy_name`, `table_tags`, and `secret_tags` to the existing values to
+avoid changing names or removing tags. The defaults preserve the module's
+existing naming conventions. For a production handoff, pin the Git source to a
+reviewed commit or release and require an import-only plan with no resource
+changes before applying.
+
+The scaling target minimums come from `read_capacity` and `write_capacity`.
+Values named `min_capacity` inside the autoscaling maps do not override those
+minimums. Current table throughput can differ from the target minimums because
+AWS autoscaling manages it; the module ignores throughput drift on the table.
+
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | table_name | string | `"chalk_online_store"` | DynamoDB table name |
+| secret_name | string | `null` | Existing/custom connection secret name; null uses `<table_name>-online-store-secret` |
+| table_tags | map(string) | `{}` | Tags to apply to the table |
+| secret_tags | map(string) | `{}` | Tags to apply to the connection secret |
 | billing_mode | string | `"PAY_PER_REQUEST"` | PROVISIONED or PAY_PER_REQUEST |
 | read_capacity | number | `null` | Read capacity units (PROVISIONED mode only) |
 | write_capacity | number | `null` | Write capacity units (PROVISIONED mode only) |
 | autoscaling_read | map(string) | See below | Read autoscaling configuration |
 | autoscaling_write | map(string) | See below | Write autoscaling configuration |
+| autoscaling_enabled | bool | `false` | Enable read/write autoscaling resources |
+| read_policy_name | string | `null` | Existing/custom read policy name; null retains the generated name |
+| write_policy_name | string | `null` | Existing/custom write policy name; null retains the generated name |
 | deletion_protection_enabled | bool | `false` | Enable deletion protection for the table |
 
 ## Outputs

@@ -6,6 +6,24 @@ variable "table_name" {
   default = "chalk_online_store"
 }
 
+variable "secret_name" {
+  description = "Existing or custom connection secret name. Defaults to <table_name>-online-store-secret when null."
+  type        = string
+  default     = null
+}
+
+variable "table_tags" {
+  description = "Tags to apply to the DynamoDB table, including tags to preserve when importing an existing table."
+  type        = map(string)
+  default     = {}
+}
+
+variable "secret_tags" {
+  description = "Tags to apply to the connection secret, including tags to preserve when importing an existing secret."
+  type        = map(string)
+  default     = {}
+}
+
 variable "billing_mode" {
   description = "Controls how you are billed for read/write throughput and how you manage capacity. The valid values are PROVISIONED or PAY_PER_REQUEST"
   type        = string
@@ -77,6 +95,8 @@ resource "aws_dynamodb_table" "main" {
   write_capacity = var.write_capacity
   read_capacity  = var.read_capacity
 
+  tags = var.table_tags
+
   lifecycle {
     ignore_changes = [
       write_capacity,
@@ -108,7 +128,8 @@ output "online_store_kind" {
 }
 
 resource "aws_secretsmanager_secret" "online_store_secret" {
-  name = "${var.table_name}-online-store-secret"
+  name = coalesce(var.secret_name, "${var.table_name}-online-store-secret")
+  tags = var.secret_tags
 }
 
 resource "aws_secretsmanager_secret_version" "online_store_secret_version" {
