@@ -148,3 +148,21 @@ variable "timeouts" {
   type        = string
   default     = "120m"
 }
+
+variable "subnet_group_name" {
+  description = "Existing or custom cache subnet group name. Defaults to <cluster_id>-subnet when null. Set when importing an existing cluster."
+  type        = string
+  default     = null
+}
+
+variable "security_group_name" {
+  description = "Existing or custom security group name, used verbatim. Defaults to a generated <cluster_id>-sg- prefix when null. Set when importing an existing cluster."
+  type        = string
+  default     = null
+}
+
+variable "secret_name" {
+  description = "Existing or custom connection secret name. Defaults to <cluster_id>-redis-uri when null. Set when importing an existing cluster."
+  type        = string
+  default     = null
+}
