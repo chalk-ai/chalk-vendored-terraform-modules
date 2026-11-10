@@ -78,6 +78,16 @@ module "chalk_valkey_durable" {
 }
 ```
 
+## Adopting an existing cluster
+
+When importing a cluster created outside this module, set `subnet_group_name`, `security_group_name`
+and `secret_name` to the existing values, and set every sizing/engine input (`node_type`,
+`num_node_groups`, `replicas_per_node_group`, `engine_version`, `parameter_group_name`,
+`transit_encryption_mode`, windows, retention, `tags`) to what is live. Import the replication
+group, subnet group, security group, each security group rule, the secret and the secret version,
+then require a plan with no destroy or replace before applying. Leave `durability` and
+`snapshot_name` unset. Pin the Git source to a reviewed release.
+
 ## Durability
 
 `durability` enables ElastiCache Multi-AZ transactional log durability, which persists writes to a
@@ -179,6 +189,9 @@ redistributes slots across the new shard count during the restore.
 | tags | map(string) | `{}` | Tags to apply to all resources |
 | snapshot_name | string | `null` | Name of an ElastiCache snapshot to restore the new cluster from. Create-only / ForceNew |
 | durability | string | `null` | Multi-AZ transactional log durability: `default`, `async`, `sync`, `disabled`. Create-only / ForceNew |
+| subnet_group_name | string | `null` | Existing/custom subnet group name; null uses `<cluster_id>-subnet`. For adoption |
+| security_group_name | string | `null` | Existing/custom security group name, used verbatim; null uses a generated `<cluster_id>-sg-` prefix. For adoption |
+| secret_name | string | `null` | Existing/custom connection secret name; null uses `<cluster_id>-redis-uri`. For adoption |
 | timeouts | string | `"120m"` | Timeout applied to the create, update and delete operations |
 
 ## Outputs

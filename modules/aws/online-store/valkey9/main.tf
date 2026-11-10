@@ -1,8 +1,8 @@
 locals {
-  subnet_group_name   = "${var.cluster_id}-subnet"
-  security_group_name = "${var.cluster_id}-sg"
+  subnet_group_name   = coalesce(var.subnet_group_name, "${var.cluster_id}-subnet")
+  security_group_name = coalesce(var.security_group_name, "${var.cluster_id}-sg")
 
-  valkey_endpoint_redis_secret_name = "${var.cluster_id}-redis-uri"
+  valkey_endpoint_redis_secret_name = coalesce(var.secret_name, "${var.cluster_id}-redis-uri")
 
   # "default" and "disabled" are valid durability values that do not turn durability on, so they
   # must not drag the prerequisites in with them.
@@ -30,7 +30,10 @@ resource "aws_elasticache_subnet_group" "valkey" {
 
 # Security group for Valkey cluster
 resource "aws_security_group" "valkey" {
-  name_prefix = "${local.security_group_name}-"
+  # An explicit security_group_name is used verbatim (adopting an existing group); otherwise a
+  # generated suffix is appended.
+  name        = var.security_group_name
+  name_prefix = var.security_group_name == null ? "${local.security_group_name}-" : null
   vpc_id      = var.vpc_id
   description = "Security group for Valkey cluster ${var.cluster_id}"
 
