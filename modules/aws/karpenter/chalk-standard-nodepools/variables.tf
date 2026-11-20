@@ -1,7 +1,6 @@
 # This module is deliberately almost input-free. It creates one fixed, opinionated
-# set of Karpenter objects, so every shape decision is a `local` in main.tf rather
-# than a variable. Only genuinely per-cluster facts -- where nodes go, and what the
-# cluster is called -- are inputs.
+# set of Karpenter objects, so shape decisions are `local`s in main.tf. Inputs
+# supply per-cluster facts and a startup-taint compatibility switch.
 
 variable "subnets" {
   description = <<-EOT
@@ -63,4 +62,10 @@ variable "node_role_name" {
     condition     = length(trimspace(coalesce(var.node_role_name, "unset"))) > 0
     error_message = "node_role_name must not be blank. Leave it unset to derive \"<cluster_name>-Managed-Node-Role\" instead."
   }
+}
+
+variable "enable_usage_startup_taint" {
+  type        = bool
+  description = "Add the usage-attribution startup taint to workload NodePools. Requires a dataplane controller that reconciles the taint; disabling it preserves attribution label requirements."
+  default     = true
 }
