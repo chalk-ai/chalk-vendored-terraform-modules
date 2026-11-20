@@ -5,14 +5,14 @@ Terraform module that creates Chalk's **standard** set of Karpenter node resourc
 that Chalk does **not** manage.
 
 It creates one fixed, opinionated set of objects, not a generic node-pool builder. It takes
-two required inputs, and everything else is fixed.
+two required inputs, an optional node role name, and a startup-taint compatibility switch.
 
 ## Features
 
 - All nine standard objects from one module. No nested modules, no sub-module calls.
 - Karpenter **v1** schemas only (`karpenter.sh/v1`, `karpenter.k8s.aws/v1`).
 - Two required inputs: `subnets` and `cluster_name`. The node role name is derived from
-  the cluster name and is the only other thing a caller normally touches.
+  the cluster name; a compatibility switch can disable the usage-attribution startup taint.
 - Pool names, labels, taints, requirements, boot volume sizes, disruption policy and
   vCPU limits are all fixed at Chalk's standard values.
 - Manifests are rendered from YAML template files, so the object that will be applied is
@@ -126,19 +126,36 @@ element into `subnetSelectorTerms`. It cannot select subnets by tag: that is not
 Chalk's standard shape, and accepting arbitrary selector terms is precisely the generality
 this module rejects.
 
-### `disruption` and `expireAfter` are emitted explicitly
+### Usage attribution and the startup gate
 
-`consolidationPolicy: WhenEmptyOrUnderutilized`, `consolidateAfter: 0s` and
-`expireAfter: 720h` currently match the Karpenter CRD defaults, so a manifest that omitted
-them would behave the same way today. They are emitted anyway, so that the applied object
-states its own disruption behaviour instead of relying on server-side defaulting. The
-practical effects: `kubectl get nodepool -o yaml` shows a real value rather than an
-implicit one, and a future change to a CRD default cannot silently change how these pools
-consolidate or expire.
+`chalk-online` and `chalk-offline` declare `Exists` requirements for
+`chalk.ai/environment-id`, `chalk.ai/resource-group`, and `chalk.ai/component`.
+Karpenter derives the node label values from the workload's scheduling constraints;
+these are not fixed labels shared by every node. `chalk-infrastructure` requires only
+`chalk.ai/component`, because shared infrastructure has no single environment or
+resource-group owner. The existing workload-type and managed-by labels and taints remain.
 
-`terminationGracePeriod: 30m` is **not** a CRD default and is load-bearing: Karpenter v1
-leaves node draining unbounded without it, so one undrainable pod can block a rollout
-indefinitely.
+All three pools start with the `chalk.ai/usage-attribution-pending=pending:NoSchedule`
+startup taint. The Chalk dataplane controller analyzes the node's attribution labels and
+atomically replaces the gate with label-valued isolation taints, or removes it as
+appropriate. **The cluster must run a dataplane controller that reconciles this gate**;
+otherwise new nodes remain blocked from normal scheduling. For a controller that does not
+support the gate yet, set `enable_usage_startup_taint = false`. This disables only the
+startup taint and preserves the attribution label requirements.
+
+The gVisor and GPU compute pools have no attribution requirements or startup gate.
+
+### Protected jobs can finish before node replacement
+
+Every pool sets `expireAfter: Never` and omits `terminationGracePeriod`, matching the
+Chalk-managed pools. Nodes do not expire on a timer, and Karpenter does not force draining
+to finish after a fixed deadline. A protected or undrainable pod can therefore delay drift
+replacement until it finishes or is otherwise unblocked.
+
+All pools use `consolidationPolicy: WhenEmptyOrUnderutilized`. Infrastructure waits `5m`
+before consolidation and limits voluntary disruption to one node at a time with
+`budgets: [{ nodes: "1" }]`. The other pools retain `consolidateAfter: 0s` and Karpenter's
+default disruption budget.
 
 ### `sensitive_fields = []` does less than it looks
 
@@ -192,11 +209,11 @@ Two further things this module does not do:
 | subnets | list(string) | _required_ | Subnet IDs Karpenter may launch nodes into. One `{ id = <subnet> }` selector term per element. Must be non-empty |
 | cluster_name | string | _required_ | EKS cluster name. Keys both `securityGroupSelectorTerms` tag terms, the node class `tags`, and the default node role name. Must be non-empty |
 | node_role_name | string | `null` → `"<cluster_name>-Managed-Node-Role"` | Bare IAM role **name** (not ARN) for launched nodes |
+| enable_usage_startup_taint | bool | `true` | Gate infrastructure, online and offline nodes until the dataplane controller reconciles usage-attribution isolation taints. Disable for controllers without gate support; attribution requirements remain |
 
-`subnets`, `cluster_name` and `node_role_name` are the entire input surface. Everything
-else — pool names, labels, taints, requirements, volume sizes, the vCPU ceiling — is a
-`local` in `main.tf`, so changing one goes through review rather than through a caller's
-`.tfvars`.
+`subnets`, `cluster_name`, `node_role_name` and `enable_usage_startup_taint` are the entire
+input surface. Pool names, attribution requirements, volume sizes and the vCPU ceiling
+remain fixed in `main.tf`, so changing one goes through review.
 
 ## Outputs
 

@@ -2,7 +2,7 @@
 # Karpenter - Chalk standard node classes, node pools and runtime class
 #
 # Creates the standard set of Karpenter objects a Chalk deployment expects --
-# three EC2NodeClass objects, six NodePool objects and one RuntimeClass -- on an
+# three EC2NodeClass objects, five NodePool objects and one RuntimeClass -- on an
 # EKS cluster that Chalk does NOT manage. On a Chalk-managed cluster these
 # objects already exist; on a self-managed cluster nothing creates them, and the
 # Chalk UI cannot fill the gap -- it creates NodePools only, requires an
@@ -35,17 +35,16 @@ locals {
   boot_volume_size         = "200Gi"
   offline_boot_volume_size = "200Gi"
 
-  # v1 leaves node draining unbounded unless terminationGracePeriod is set, so it
-  # is always set here. expireAfter and the disruption settings match the current
-  # Karpenter CRD defaults but are emitted anyway, so the applied object states
-  # them outright; see README "Behaviour worth knowing".
+  # Let protected jobs finish before drift replacement: never expire nodes or
+  # force their drain with a terminationGracePeriod.
   node_pool_common = {
-    expire_after             = "720h"
-    termination_grace_period = "30m"
-    consolidation_policy     = "WhenEmptyOrUnderutilized"
-    consolidate_after        = "0s"
-    weight                   = 10
-    max_cpu                  = local.max_cpu
+    expire_after         = "Never"
+    consolidation_policy = "WhenEmptyOrUnderutilized"
+    consolidate_after    = "0s"
+    disruption_budgets   = []
+    startup_taints       = []
+    weight               = 10
+    max_cpu              = local.max_cpu
   }
 
   # The node role naming convention Chalk-managed clusters follow. Override
@@ -112,9 +111,11 @@ locals {
 
   internal_node_pools = {
     chalk-infrastructure = {
-      node_class_name = "al2023"
-      workload_type   = "infrastructure"
-      requirements    = local.chalk_workload_requirements
+      node_class_name    = "al2023"
+      workload_type      = "infrastructure"
+      requirements       = local.chalk_workload_requirements
+      consolidate_after  = "5m"
+      disruption_budgets = [{ nodes = "1" }]
     }
     chalk-online = {
       node_class_name = "al2023"
@@ -229,7 +230,21 @@ resource "kubectl_manifest" "internal_node_pools" {
       "chalk.ai/workload-type" = each.value.workload_type
     }
     node_class_name = each.value.node_class_name
-    requirements    = each.value.requirements
+    # Shared infrastructure has a component but no single environment/resource-group owner.
+    requirements = concat(each.value.requirements, each.value.workload_type != "infrastructure" ? [
+      { key = "chalk.ai/resource-group", operator = "Exists" },
+      { key = "chalk.ai/environment-id", operator = "Exists" },
+      ] : [], [
+      { key = "chalk.ai/component", operator = "Exists" },
+    ])
+    # The dataplane controller replaces this gate atomically with label-valued isolation taints.
+    startup_taints = var.enable_usage_startup_taint ? [{
+      key    = "chalk.ai/usage-attribution-pending"
+      value  = "pending"
+      effect = "NoSchedule"
+    }] : []
+    consolidate_after  = try(each.value.consolidate_after, local.node_pool_common.consolidate_after)
+    disruption_budgets = try(each.value.disruption_budgets, local.node_pool_common.disruption_budgets)
     taints = concat(
       [
         {

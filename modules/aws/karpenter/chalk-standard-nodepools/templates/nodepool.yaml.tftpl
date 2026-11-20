@@ -21,16 +21,25 @@ spec:
         kind: EC2NodeClass
         name: ${jsonencode(node_class_name)}
       expireAfter: ${jsonencode(expire_after)}
-      terminationGracePeriod: ${jsonencode(termination_grace_period)}
       requirements:
 %{ for requirement in requirements ~}
         - key: ${jsonencode(requirement.key)}
           operator: ${jsonencode(requirement.operator)}
+%{ if contains(keys(requirement), "values") ~}
           values:
 %{ for requirement_value in requirement.values ~}
             - ${jsonencode(requirement_value)}
 %{ endfor ~}
+%{ endif ~}
 %{ endfor ~}
+%{ if length(startup_taints) > 0 ~}
+      startupTaints:
+%{ for taint in startup_taints ~}
+        - key: ${jsonencode(taint.key)}
+          value: ${jsonencode(taint.value)}
+          effect: ${jsonencode(taint.effect)}
+%{ endfor ~}
+%{ endif ~}
 %{ if length(taints) > 0 ~}
       taints:
 %{ for taint in taints ~}
@@ -44,4 +53,10 @@ spec:
   disruption:
     consolidationPolicy: ${jsonencode(consolidation_policy)}
     consolidateAfter: ${jsonencode(consolidate_after)}
+%{ if length(disruption_budgets) > 0 ~}
+    budgets:
+%{ for budget in disruption_budgets ~}
+      - nodes: ${jsonencode(budget.nodes)}
+%{ endfor ~}
+%{ endif ~}
   weight: ${jsonencode(weight)}
